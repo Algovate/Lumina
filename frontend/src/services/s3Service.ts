@@ -165,22 +165,23 @@ class S3Service {
           if (xhr.status === 200 || xhr.status === 204) {
             resolve();
           } else {
-            reject(new Error(`Upload failed with status ${xhr.status}`));
+            const errorText = xhr.responseText || xhr.statusText || 'Unknown error';
+            reject(new Error(`Upload failed with status ${xhr.status}: ${errorText}`));
           }
         });
 
         xhr.addEventListener('error', () => {
-          reject(new Error('Upload failed'));
+          reject(new Error('Upload failed: Network error or empty response'));
+        });
+
+        xhr.addEventListener('abort', () => {
+          reject(new Error('Upload was aborted'));
         });
 
         xhr.open('PUT', url);
         xhr.setRequestHeader('Content-Type', file.type);
-        // 设置缓存控制头（图片文件：1年缓存，其他文件：1小时缓存）
-        const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
-        const cacheControl = isImage 
-          ? 'max-age=31536000, public' 
-          : 'max-age=3600, public';
-        xhr.setRequestHeader('Cache-Control', cacheControl);
+        // 注意：Cache-Control 已经在预签名 URL 的命令中设置，不需要在客户端再次设置
+        // 如果客户端设置额外的头，可能导致签名验证失败
         xhr.send(file);
       });
     } catch (error) {
