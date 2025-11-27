@@ -321,31 +321,23 @@ class S3Service {
    */
   async downloadImage(imageUrl: string, fileName: string): Promise<void> {
     try {
-      // Fetch the image as a blob
-      const response = await fetch(imageUrl);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to download image: ${response.statusText}`);
-      }
-
-      const blob = await response.blob();
-      
-      // Create a temporary URL for the blob
-      const blobUrl = window.URL.createObjectURL(blob);
-      
+      // Use a direct link approach to avoid CORS issues
       // Create a temporary anchor element and trigger download
       const link = document.createElement('a');
-      link.href = blobUrl;
+      link.href = imageUrl;
       link.download = fileName;
+      link.target = '_blank'; // Open in new tab as fallback
+      link.rel = 'noopener noreferrer';
       link.style.display = 'none';
       
       // Append to body, click, and remove
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
       
-      // Clean up the blob URL
-      window.URL.revokeObjectURL(blobUrl);
+      // Remove the link after a short delay to ensure download starts
+      setTimeout(() => {
+        document.body.removeChild(link);
+      }, 100);
     } catch (error) {
       logger.error('Error downloading image:', error);
       throw error;
