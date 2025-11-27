@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lumina - 让回忆在云端发光</title>
+    <!-- 抑制浏览器扩展的无害错误 -->
+    <script>
+      // 抑制浏览器扩展的 runtime.lastError 错误（这些错误来自浏览器扩展，不影响应用功能）
+      (function() {
+        // 添加一个空的 message listener 来防止错误
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+          try {
+            chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+              // 返回 true 表示我们会异步响应（即使我们不响应）
+              return true;
+            });
+          } catch (e) {
+            // 忽略设置监听器时的错误
+          }
+        }
+        
+        // 拦截控制台错误，过滤掉浏览器扩展的无害错误
+        const originalError = console.error;
+        console.error = function(...args) {
+          // 检查是否是浏览器扩展的错误
+          const message = args.length > 0 ? String(args[0] || '') : '';
+          const fullMessage = args.map(a => String(a || '')).join(' ');
+          
+          // 过滤常见的浏览器扩展无害错误
+          if (
+            (message.includes('runtime.lastError') && 
+             message.includes('Could not establish connection') &&
+             message.includes('Receiving end does not exist')) ||
+            (fullMessage.includes('listener indicated an asynchronous response') &&
+             fullMessage.includes('message channel closed before a response was received')) ||
+            (fullMessage.includes('Extension context invalidated'))
+          ) {
+            // 静默忽略这些无害的浏览器扩展错误
+            return;
+          }
+          // 其他错误正常输出
+          originalError.apply(console, args);
+        };
+        
+        // 同时过滤未捕获的 Promise 错误（来自浏览器扩展）
+        window.addEventListener('unhandledrejection', function(event) {
+          const message = event.reason?.message || String(event.reason || '');
+          if (
+            message.includes('listener indicated an asynchronous response') ||
+            message.includes('message channel closed') ||
+            message.includes('Extension context invalidated')
+          ) {
+            event.preventDefault(); // 阻止错误显示在控制台
+            return false;
+          }
+        });
+      })();
+    </script>
+    <!-- 运行时配置文件 - 在部署时由部署脚本生成，开发环境可选 -->
+    <script src="/config.js" onerror="console.log('config.js not found, using environment variables')"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

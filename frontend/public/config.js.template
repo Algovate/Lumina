@@ -1,0 +1,12 @@
+// 运行时配置文件模板
+// 部署后，部署脚本会生成实际的 config.js 文件
+// 这个文件在 index.html 中被加载
+
+window.LUMINA_CONFIG = {
+  VITE_S3_BUCKET: '',
+  VITE_AWS_REGION: 'us-east-1',
+  VITE_COGNITO_USER_POOL_ID: '',
+  VITE_COGNITO_USER_POOL_CLIENT_ID: '',
+  VITE_API_URL: '',
+};
+
