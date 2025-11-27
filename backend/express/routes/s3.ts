@@ -24,12 +24,20 @@ const s3Client = new S3Client({
 
 const BUCKET_NAME = process.env.S3_BUCKET || '';
 const THUMBNAIL_PREFIX = 'thumbnails/';
+const PREVIEW_PREFIX = 'previews/';
 
 /**
  * Get thumbnail key for an image
  */
 function getThumbnailKey(originalKey: string): string {
   return `${THUMBNAIL_PREFIX}${originalKey}`;
+}
+
+/**
+ * Get preview key for an image
+ */
+function getPreviewKey(originalKey: string): string {
+  return `${PREVIEW_PREFIX}${originalKey}`;
 }
 
 /**
@@ -49,6 +57,27 @@ async function thumbnailExists(thumbnailKey: string): Promise<boolean> {
     }
     // Log other errors but don't fail
     logger.error(`Error checking thumbnail existence for ${thumbnailKey}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Check if preview exists for an image
+ */
+async function previewExists(previewKey: string): Promise<boolean> {
+  try {
+    const headCommand = new HeadObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: previewKey,
+    });
+    await s3Client.send(headCommand);
+    return true;
+  } catch (error: any) {
+    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+      return false;
+    }
+    // Log other errors but don't fail
+    logger.error(`Error checking preview existence for ${previewKey}:`, error);
     return false;
   }
 }
@@ -118,7 +147,7 @@ router.get('/list', async (req, res) => {
         const batch = response.Contents.slice(i, i + batchSize);
         await Promise.all(
           batch.map(async (object) => {
-            if (object.Key && !object.Key.endsWith('/') && !object.Key.startsWith(THUMBNAIL_PREFIX)) {
+            if (object.Key && !object.Key.endsWith('/') && !object.Key.startsWith(THUMBNAIL_PREFIX) && !object.Key.startsWith(PREVIEW_PREFIX)) {
               try {
                 // 生成预签名 URL
                 const getCommand = new GetObjectCommand({
@@ -143,6 +172,22 @@ router.get('/list', async (req, res) => {
                   }
                 }
 
+                // 检查并生成预览图 URL
+                let previewUrl: string | undefined;
+                const previewKey = getPreviewKey(object.Key);
+                if (await previewExists(previewKey)) {
+                  try {
+                    const previewCommand = new GetObjectCommand({
+                      Bucket: BUCKET_NAME,
+                      Key: previewKey,
+                    });
+                    previewUrl = await getSignedUrl(s3Client, previewCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
+                  } catch (error) {
+                    logger.error(`Error generating preview URL for ${previewKey}:`, error);
+                    // Continue without preview URL
+                  }
+                }
+
                 // 获取标签
                 const tags = await getObjectTags(object.Key);
 
@@ -153,6 +198,7 @@ router.get('/list', async (req, res) => {
                   lastModified: object.LastModified || new Date(),
                   url,
                   thumbnailUrl,
+                  previewUrl,
                   folder: prefix || undefined,
                   tags,
                 });
@@ -180,6 +226,21 @@ router.get('/list', async (req, res) => {
                       // Ignore thumbnail URL errors in fallback
                     }
                   }
+
+                  // 尝试获取预览图 URL
+                  let previewUrl: string | undefined;
+                  const previewKey = getPreviewKey(object.Key);
+                  if (await previewExists(previewKey)) {
+                    try {
+                      const previewCommand = new GetObjectCommand({
+                        Bucket: BUCKET_NAME,
+                        Key: previewKey,
+                      });
+                      previewUrl = await getSignedUrl(s3Client, previewCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
+                    } catch (error) {
+                      // Ignore preview URL errors in fallback
+                    }
+                  }
                   
                   images.push({
                     key: object.Key,
@@ -188,6 +249,7 @@ router.get('/list', async (req, res) => {
                     lastModified: object.LastModified || new Date(),
                     url,
                     thumbnailUrl,
+                    previewUrl,
                     folder: prefix || undefined,
                     tags: [],
                   });
@@ -282,10 +344,17 @@ router.post('/presign-upload', async (req, res) => {
       return res.status(500).json({ error: 'S3_BUCKET not configured' });
     }
 
+    // 判断是否为图片文件，设置适当的缓存策略
+    const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(key);
+    const cacheControl = isImage 
+      ? 'max-age=31536000, public' // 图片文件：1年缓存，公开
+      : 'max-age=3600, public'; // 其他文件：1小时缓存
+
     const command = new PutObjectCommand({
       Bucket: BUCKET_NAME,
       Key: key,
       ContentType: contentType || 'application/octet-stream',
+      CacheControl: cacheControl,
     });
 
     const url = await getSignedUrl(s3Client, command, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
@@ -420,8 +489,8 @@ router.get('/folders', async (req, res) => {
     if (response.CommonPrefixes) {
       for (const prefixObj of response.CommonPrefixes) {
         if (prefixObj.Prefix) {
-          // 过滤掉 thumbnails/ 前缀的文件夹
-          if (prefixObj.Prefix.startsWith(THUMBNAIL_PREFIX)) {
+          // 过滤掉 thumbnails/ 和 previews/ 前缀的文件夹
+          if (prefixObj.Prefix.startsWith(THUMBNAIL_PREFIX) || prefixObj.Prefix.startsWith(PREVIEW_PREFIX)) {
             continue;
           }
           const folderName = prefixObj.Prefix.replace(prefix, '').replace('/', '');

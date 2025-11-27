@@ -1,6 +1,6 @@
 import { S3Event, S3EventRecord, Context } from 'aws-lambda';
 import { S3Client } from '@aws-sdk/client-s3';
-import { generateThumbnail } from './thumbnailUtils';
+import { generateThumbnailAndPreview } from './thumbnailUtils';
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
@@ -15,18 +15,28 @@ async function processS3Record(record: S3EventRecord): Promise<void> {
   const bucket = record.s3.bucket.name;
   const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));
 
-  const result = await generateThumbnail(s3Client, bucket, key);
+  const results = await generateThumbnailAndPreview(s3Client, bucket, key);
   
-  if (result.success) {
-    console.log(`Thumbnail created successfully: ${result.thumbnailKey}`);
-  } else if (result.error === 'Thumbnail already exists') {
-    console.log(`Thumbnail already exists: ${result.thumbnailKey}`);
-  } else if (result.error === 'Skipping thumbnail file' || result.error === 'Not an image file') {
-    console.log(`Skipping: ${key} (${result.error})`);
-  } else {
-    console.error(`Error processing ${key}: ${result.error}`);
-    // 不抛出错误，避免影响原图上传
-    // 错误会被记录到 CloudWatch Logs
+  // 处理缩略图结果
+  if (results.thumbnail.success) {
+    console.log(`Thumbnail created successfully: ${results.thumbnail.thumbnailKey}`);
+  } else if (results.thumbnail.error === 'Thumbnail already exists') {
+    console.log(`Thumbnail already exists: ${results.thumbnail.thumbnailKey}`);
+  } else if (results.thumbnail.error === 'Skipping thumbnail file' || results.thumbnail.error === 'Not an image file') {
+    console.log(`Skipping thumbnail for ${key}: ${results.thumbnail.error}`);
+  } else if (results.thumbnail.error) {
+    console.error(`Error creating thumbnail for ${key}: ${results.thumbnail.error}`);
+  }
+
+  // 处理预览图结果
+  if (results.preview.success) {
+    console.log(`Preview created successfully: ${results.preview.previewKey}`);
+  } else if (results.preview.error === 'Preview already exists') {
+    console.log(`Preview already exists: ${results.preview.previewKey}`);
+  } else if (results.preview.error === 'Skipping generated image file' || results.preview.error === 'Not an image file') {
+    console.log(`Skipping preview for ${key}: ${results.preview.error}`);
+  } else if (results.preview.error) {
+    console.error(`Error creating preview for ${key}: ${results.preview.error}`);
   }
 }
 

@@ -45,6 +45,17 @@ export const ImagePreview = ({
   const hasNext = currentIndex >= 0 && currentIndex < images.length - 1;
   const hasPrevious = currentIndex > 0;
 
+  // 获取应该使用的图片 URL（幻灯片模式下优先使用预览图）
+  const getImageUrl = (img: S3Image | null): string | undefined => {
+    if (!img) return undefined;
+    // 在幻灯片模式下，优先使用预览图（如果存在）
+    if (slideshowMode && img.previewUrl) {
+      return img.previewUrl;
+    }
+    // 否则使用原图
+    return img.url;
+  };
+
   // 幻灯片模式自动播放
   useEffect(() => {
     // 清除之前的计时器
@@ -423,12 +434,12 @@ export const ImagePreview = ({
         className="max-w-[90vw] max-h-[90vh] flex items-center justify-center relative"
         onClick={(e) => e.stopPropagation()}
       >
-        {image.url ? (
+        {getImageUrl(image) ? (
           <div className="relative w-full h-full flex items-center justify-center">
             {/* Previous image (for slide transition) */}
             {transitionType === 'slide' && previousImage && previousImage.key !== image.key && transitionState === 'transitioning' && (
               <img
-                src={previousImage.url}
+                src={getImageUrl(previousImage) || previousImage.url}
                 alt={previousImage.name}
                 className="absolute max-w-full max-h-[90vh] object-contain transition-transform duration-500 ease-in-out"
                 style={{
@@ -442,7 +453,7 @@ export const ImagePreview = ({
             {/* Current image */}
             <img
               ref={imageRef}
-              src={image.url}
+              src={getImageUrl(image) || image.url}
               alt={image.name}
               className={`max-w-full max-h-[90vh] object-contain ${getTransitionClasses()}`}
               style={getSlideStyle()}

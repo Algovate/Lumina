@@ -175,6 +175,12 @@ class S3Service {
 
         xhr.open('PUT', url);
         xhr.setRequestHeader('Content-Type', file.type);
+        // 设置缓存控制头（图片文件：1年缓存，其他文件：1小时缓存）
+        const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+        const cacheControl = isImage 
+          ? 'max-age=31536000, public' 
+          : 'max-age=3600, public';
+        xhr.setRequestHeader('Cache-Control', cacheControl);
         xhr.send(file);
       });
     } catch (error) {

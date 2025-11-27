@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
-import { generateThumbnail, isImageFile, isThumbnailFile, THUMBNAIL_PREFIX, thumbnailExists } from './thumbnailUtils';
+import { 
+  generateThumbnailAndPreview, 
+  isImageFile, 
+  isGeneratedImageFile, 
+  THUMBNAIL_PREFIX, 
+  PREVIEW_PREFIX,
+  thumbnailExists,
+  previewExists 
+} from './thumbnailUtils';
 
 // 解析命令行参数
 interface Args {
@@ -92,8 +100,8 @@ async function listAllImages(
     if (response.Contents) {
       for (const object of response.Contents) {
         if (object.Key && !object.Key.endsWith('/')) {
-          // 排除缩略图文件
-          if (!isThumbnailFile(object.Key) && isImageFile(object.Key)) {
+          // 排除生成的图片文件（缩略图和预览图）
+          if (!isGeneratedImageFile(object.Key) && isImageFile(object.Key)) {
             images.push(object.Key);
           }
         }
@@ -164,10 +172,12 @@ async function main() {
 
   console.log('');
 
-  // 检查哪些图片需要生成缩略图
-  console.log('正在检查哪些图片需要生成缩略图...');
+  // 检查哪些图片需要生成缩略图和预览图
+  console.log('正在检查哪些图片需要生成缩略图和预览图...');
   const imagesToProcess: string[] = [];
-  const imagesWithThumbnails: string[] = [];
+  const imagesWithBoth: string[] = [];
+  const imagesWithThumbnailOnly: string[] = [];
+  const imagesWithPreviewOnly: string[] = [];
   const skippedImages: string[] = [];
 
   for (let i = 0; i < allImages.length; i++) {
@@ -175,15 +185,25 @@ async function main() {
     updateProgress(i + 1, allImages.length, `检查: ${imageKey}`);
 
     const thumbnailKey = `${THUMBNAIL_PREFIX}${imageKey}`;
+    const previewKey = `${PREVIEW_PREFIX}${imageKey}`;
     
     try {
-      // 检查缩略图是否存在
-      const exists = await thumbnailExists(s3Client, bucketName, thumbnailKey);
+      // 检查缩略图和预览图是否存在
+      const [hasThumbnail, hasPreview] = await Promise.all([
+        thumbnailExists(s3Client, bucketName, thumbnailKey),
+        previewExists(s3Client, bucketName, previewKey),
+      ]);
       
-      if (exists) {
-        imagesWithThumbnails.push(imageKey);
+      if (hasThumbnail && hasPreview) {
+        imagesWithBoth.push(imageKey);
+      } else if (hasThumbnail) {
+        imagesWithThumbnailOnly.push(imageKey);
+        imagesToProcess.push(imageKey); // 需要生成预览图
+      } else if (hasPreview) {
+        imagesWithPreviewOnly.push(imageKey);
+        imagesToProcess.push(imageKey); // 需要生成缩略图
       } else {
-        imagesToProcess.push(imageKey);
+        imagesToProcess.push(imageKey); // 两者都需要生成
       }
     } catch (error) {
       skippedImages.push(imageKey);
@@ -192,31 +212,39 @@ async function main() {
   }
 
   console.log('');
-  console.log(`需要生成缩略图: ${imagesToProcess.length}`);
-  console.log(`已有缩略图: ${imagesWithThumbnails.length}`);
+  console.log(`需要处理: ${imagesToProcess.length}`);
+  console.log(`已有缩略图和预览图: ${imagesWithBoth.length}`);
+  if (imagesWithThumbnailOnly.length > 0) {
+    console.log(`仅有缩略图（需要生成预览图）: ${imagesWithThumbnailOnly.length}`);
+  }
+  if (imagesWithPreviewOnly.length > 0) {
+    console.log(`仅有预览图（需要生成缩略图）: ${imagesWithPreviewOnly.length}`);
+  }
   if (skippedImages.length > 0) {
     console.log(`跳过（错误）: ${skippedImages.length}`);
   }
   console.log('');
 
   if (imagesToProcess.length === 0) {
-    console.log('所有图片都已生成缩略图！');
+    console.log('所有图片都已生成缩略图和预览图！');
     process.exit(0);
   }
 
   if (args.dryRun) {
-    console.log('以下图片需要生成缩略图:');
+    console.log('以下图片需要生成缩略图和/或预览图:');
     imagesToProcess.forEach((key, index) => {
       console.log(`  ${index + 1}. ${key}`);
     });
     process.exit(0);
   }
 
-  // 生成缩略图
-  console.log('开始生成缩略图...');
+  // 生成缩略图和预览图
+  console.log('开始生成缩略图和预览图...');
   const results = {
-    success: 0,
-    failed: 0,
+    thumbnailSuccess: 0,
+    thumbnailFailed: 0,
+    previewSuccess: 0,
+    previewFailed: 0,
     errors: [] as Array<{ key: string; error: string }>,
   };
 
@@ -224,21 +252,28 @@ async function main() {
     const imageKey = imagesToProcess[i];
     updateProgress(i + 1, imagesToProcess.length, `处理: ${imageKey}`);
 
-    const result = await generateThumbnail(s3Client, bucketName, imageKey);
+    const result = await generateThumbnailAndPreview(s3Client, bucketName, imageKey);
     
-    if (result.success) {
-      results.success++;
-    } else {
-      results.failed++;
-      results.errors.push({ key: imageKey, error: result.error || 'Unknown error' });
+    if (result.thumbnail.success) {
+      results.thumbnailSuccess++;
+    } else if (result.thumbnail.error && result.thumbnail.error !== 'Thumbnail already exists') {
+      results.thumbnailFailed++;
+      results.errors.push({ key: imageKey, error: `Thumbnail: ${result.thumbnail.error}` });
+    }
+
+    if (result.preview.success) {
+      results.previewSuccess++;
+    } else if (result.preview.error && result.preview.error !== 'Preview already exists') {
+      results.previewFailed++;
+      results.errors.push({ key: imageKey, error: `Preview: ${result.preview.error}` });
     }
   }
 
   console.log('');
   console.log('');
   console.log('=== 处理完成 ===');
-  console.log(`成功: ${results.success}`);
-  console.log(`失败: ${results.failed}`);
+  console.log(`缩略图 - 成功: ${results.thumbnailSuccess}, 失败: ${results.thumbnailFailed}`);
+  console.log(`预览图 - 成功: ${results.previewSuccess}, 失败: ${results.previewFailed}`);
 
   if (results.errors.length > 0) {
     console.log('');
@@ -248,7 +283,8 @@ async function main() {
     });
   }
 
-  process.exit(results.failed > 0 ? 1 : 0);
+  const totalFailed = results.thumbnailFailed + results.previewFailed;
+  process.exit(totalFailed > 0 ? 1 : 0);
 }
 
 // 运行主函数
