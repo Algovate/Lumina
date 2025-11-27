@@ -311,6 +311,8 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
       --role "${LAMBDA_ROLE_ARN}" \
       --runtime nodejs20.x \
       --handler dist/lambda.handler \
+      --timeout 30 \
+      --memory-size 512 \
       --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL}}" \
       --region "${AWS_REGION}" 2>&1)
     UPDATE_EXIT_CODE=$?
@@ -347,6 +349,8 @@ else
     --runtime nodejs20.x \
     --role "${LAMBDA_ROLE_ARN}" \
     --handler dist/lambda.handler \
+    --timeout 30 \
+    --memory-size 512 \
     --zip-file fileb://"${ZIP_PATH}" \
     --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL}}" \
     --region "${AWS_REGION}" >/dev/null

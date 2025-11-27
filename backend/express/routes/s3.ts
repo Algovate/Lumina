@@ -112,21 +112,35 @@ router.get('/list', async (req, res) => {
                 });
               } catch (error) {
                 logger.error(`Error processing image ${object.Key}:`, error);
-                // 即使获取标签失败，也添加图片（不带标签）
-                const getCommand = new GetObjectCommand({
-                  Bucket: BUCKET_NAME,
-                  Key: object.Key,
-                });
-                const url = await getSignedUrl(s3Client, getCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
-                images.push({
-                  key: object.Key,
-                  name: object.Key.split('/').pop() || object.Key,
-                  size: object.Size || 0,
-                  lastModified: object.LastModified || new Date(),
-                  url,
-                  folder: prefix || undefined,
-                  tags: [],
-                });
+                // 即使获取标签或预签名 URL 失败，也尝试添加图片（不带标签和 URL）
+                try {
+                  const getCommand = new GetObjectCommand({
+                    Bucket: BUCKET_NAME,
+                    Key: object.Key,
+                  });
+                  const url = await getSignedUrl(s3Client, getCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
+                  images.push({
+                    key: object.Key,
+                    name: object.Key.split('/').pop() || object.Key,
+                    size: object.Size || 0,
+                    lastModified: object.LastModified || new Date(),
+                    url,
+                    folder: prefix || undefined,
+                    tags: [],
+                  });
+                } catch (fallbackError) {
+                  // 如果连预签名 URL 也获取失败，仍然添加图片但标记为需要后续获取 URL
+                  logger.error(`Failed to get presigned URL for ${object.Key} even in fallback:`, fallbackError);
+                  images.push({
+                    key: object.Key,
+                    name: object.Key.split('/').pop() || object.Key,
+                    size: object.Size || 0,
+                    lastModified: object.LastModified || new Date(),
+                    url: '', // 空 URL，前端可以稍后通过 presign 端点获取
+                    folder: prefix || undefined,
+                    tags: [],
+                  });
+                }
               }
             }
           })

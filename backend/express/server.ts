@@ -20,6 +20,17 @@ import tagsRoutes from './routes/tags';
 
 dotenv.config();
 
+// Global error handlers for Lambda - prevent crashes from unhandled errors
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit in Lambda - let the request complete
+});
+
+process.on('uncaughtException', (error: Error) => {
+  logger.error('Uncaught Exception:', error);
+  // Don't exit in Lambda - let the request complete
+});
+
 // Validate configuration on startup
 const configValidation = validateConfig();
 if (!configValidation.valid) {
@@ -235,6 +246,17 @@ app.post('/api/presign', authenticate, async (req, res) => {
 // Register route modules (all routes require authentication)
 app.use('/api/s3', authenticate, s3Routes);
 app.use('/api/s3', authenticate, tagsRoutes);
+
+// Global error handler middleware - must be after all routes
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  logger.error('Unhandled error in Express:', err);
+  if (!res.headersSent) {
+    res.status(500).json({
+      error: 'Internal server error',
+      details: process.env.NODE_ENV !== 'production' ? getErrorMessage(err) : undefined,
+    });
+  }
+});
 
 // 导出 app 供 Lambda 使用
 export default app;
