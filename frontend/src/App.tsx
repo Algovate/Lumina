@@ -25,10 +25,8 @@ function App() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [previewImage, setPreviewImage] = useState<S3Image | null>(null);
   const [previewIndex, setPreviewIndex] = useState(0);
-  // 默认在大屏幕上展开，小屏幕上收缩
-  const [sidebarExpanded, setSidebarExpanded] = useState(
-    typeof window !== 'undefined' && window.innerWidth >= 1024
-  );
+  // 默认收起侧边栏
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
   // 只在已认证时加载数据
   const { 

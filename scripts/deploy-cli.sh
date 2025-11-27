@@ -633,6 +633,22 @@ VITE_COGNITO_USER_POOL_CLIENT_ID="${COGNITO_CLIENT_ID}" \
 VITE_COGNITO_DOMAIN="${COGNITO_DOMAIN}" \
 npm run build
 
+# 生成运行时配置文件 config.js
+echo "  生成运行时配置文件 config.js..."
+CONFIG_JS_PATH="${ROOT_DIR}/frontend/dist/config.js"
+cat > "${CONFIG_JS_PATH}" <<EOF
+// 运行时配置文件
+// 此文件在部署时自动生成
+window.LUMINA_CONFIG = {
+  VITE_API_URL: "${API_URL}",
+  VITE_AWS_REGION: "${AWS_REGION}",
+  VITE_S3_BUCKET: "${IMAGE_BUCKET}",
+  VITE_COGNITO_USER_POOL_ID: "${COGNITO_USER_POOL_ID}",
+  VITE_COGNITO_USER_POOL_CLIENT_ID: "${COGNITO_CLIENT_ID}",
+  VITE_COGNITO_DOMAIN: "${COGNITO_DOMAIN}",
+};
+EOF
+
 cd "${ROOT_DIR}"
 echo "✅ 前端构建完成"
 echo ""
