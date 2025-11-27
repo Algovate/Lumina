@@ -1,9 +1,3 @@
----
-noteId: "0db83292cb4611f09d2ddd4524ff0a50"
-tags: []
-
----
-
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
