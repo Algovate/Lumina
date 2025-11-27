@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { S3Image } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
+import { s3Service } from '../services/s3Service';
 
 interface ImageCardProps {
   image: S3Image;
@@ -15,6 +16,7 @@ export const ImageCard = ({ image, onClick, onDelete, onTagClick, isSelected }: 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | undefined>(image.thumbnailUrl || image.url);
   const [imageError, setImageError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   // 当 image 对象更新时，重置 imageSrc
   useEffect(() => {
@@ -32,6 +34,24 @@ export const ImageCard = ({ image, onClick, onDelete, onTagClick, isSelected }: 
 
   const formatDate = (date: Date): string => {
     return new Date(date).toLocaleDateString();
+  };
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!image.url) {
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      await s3Service.downloadImage(image.url, image.name);
+    } catch (error) {
+      console.error('Failed to download image:', error);
+      alert('下载失败，请稍后重试');
+    } finally {
+      setDownloading(false);
+      setShowMenu(false);
+    }
   };
 
   return (
@@ -112,6 +132,26 @@ export const ImageCard = ({ image, onClick, onDelete, onTagClick, isSelected }: 
                   }}
                 />
                 <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-30">
+                  <button
+                    onClick={handleDownload}
+                    disabled={downloading || !image.url}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                      />
+                    </svg>
+                    {downloading ? '下载中...' : '下载图片'}
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

@@ -315,6 +315,44 @@ class S3Service {
   }
 
   /**
+   * Download an image file
+   * @param imageUrl The URL of the image to download (should be the original image URL)
+   * @param fileName The filename to use for the downloaded file
+   */
+  async downloadImage(imageUrl: string, fileName: string): Promise<void> {
+    try {
+      // Fetch the image as a blob
+      const response = await fetch(imageUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to download image: ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      
+      // Create a temporary URL for the blob
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      // Create a temporary anchor element and trigger download
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      link.style.display = 'none';
+      
+      // Append to body, click, and remove
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the blob URL
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      logger.error('Error downloading image:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get presigned URL for viewing an image
    */
   async getPresignedUrl(key: string): Promise<string> {

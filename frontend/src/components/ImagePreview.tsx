@@ -37,6 +37,7 @@ export const ImagePreview = ({
   const [transitionDirection, setTransitionDirection] = useState<'next' | 'previous'>('next');
   const [transitionType, setTransitionType] = useState<'fade' | 'slide' | 'zoom'>('fade');
   const [previousImage, setPreviousImage] = useState<S3Image | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const slideshowTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
 
@@ -201,6 +202,23 @@ export const ImagePreview = ({
     setSlideshowMode(!slideshowMode);
   };
 
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!image || !image.url) {
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      await s3Service.downloadImage(image.url, image.name);
+    } catch (error) {
+      console.error('Failed to download image:', error);
+      alert('下载失败，请稍后重试');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const handleNext = () => {
     setTransitionDirection('next');
     onNext();
@@ -352,6 +370,29 @@ export const ImagePreview = ({
             <option value="zoom">缩放</option>
           </select>
         </div>
+
+        {/* Download button */}
+        <button
+          onClick={handleDownload}
+          disabled={downloading || !image?.url}
+          className="p-2 bg-black bg-opacity-50 text-white hover:bg-opacity-70 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label="下载图片"
+          title="下载原图"
+        >
+          <svg
+            className="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+            />
+          </svg>
+        </button>
 
         {/* Close button */}
         <button
