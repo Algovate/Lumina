@@ -1,0 +1,26 @@
+{
+  "name": "lumina-thumbnail-generator",
+  "version": "1.0.0",
+  "description": "Lambda function to generate thumbnails for uploaded images",
+  "main": "dist/handler.js",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "build:lambda": "rm -rf dist && tsc && cp package.json dist/ && cp -r node_modules dist/",
+    "migrate-thumbnails": "ts-node generate-thumbnails.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.939.0",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^24.10.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
+

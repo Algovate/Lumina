@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { S3Image } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -13,6 +13,14 @@ interface ImageCardProps {
 export const ImageCard = ({ image, onClick, onDelete, onTagClick, isSelected }: ImageCardProps) => {
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [imageSrc, setImageSrc] = useState<string | undefined>(image.thumbnailUrl || image.url);
+  const [imageError, setImageError] = useState(false);
+
+  // 当 image 对象更新时，重置 imageSrc
+  useEffect(() => {
+    setImageSrc(image.thumbnailUrl || image.url);
+    setImageError(false);
+  }, [image.thumbnailUrl, image.url]);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes';
@@ -34,12 +42,20 @@ export const ImageCard = ({ image, onClick, onDelete, onTagClick, isSelected }: 
       onClick={onClick}
     >
       <div className="aspect-square bg-gray-200 relative">
-        {image.url ? (
+        {imageSrc && !imageError ? (
           <img
-            src={image.url}
+            src={imageSrc}
             alt={image.name}
             className="w-full h-full object-cover"
             loading="lazy"
+            onError={() => {
+              // 如果缩略图加载失败，回退到原图
+              if (imageSrc === image.thumbnailUrl && image.url) {
+                setImageSrc(image.url);
+              } else {
+                setImageError(true);
+              }
+            }}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-400">

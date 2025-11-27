@@ -11,18 +11,20 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 IMAGE_BUCKET="${IMAGE_BUCKET:-lumina-images-rodin}"
 FRONTEND_BUCKET="${FRONTEND_BUCKET:-lumina-frontend-rodin}"
 LAMBDA_FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-LuminaBackendCli}"
+THUMBNAIL_LAMBDA_FUNCTION_NAME="${THUMBNAIL_LAMBDA_FUNCTION_NAME:-LuminaThumbnailGenerator}"
 LAMBDA_ROLE_NAME="${LAMBDA_ROLE_NAME:-LuminaLambdaCliRole}"
 COGNITO_USER_POOL_NAME="${COGNITO_USER_POOL_NAME:-lumina-user-pool-cli}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=== Lumina CLI 部署 ==="
-echo "Region:          ${AWS_REGION}"
-echo "Image bucket:    ${IMAGE_BUCKET}"
-echo "Frontend bucket: ${FRONTEND_BUCKET}"
-echo "Lambda function: ${LAMBDA_FUNCTION_NAME}"
-echo "Lambda role:     ${LAMBDA_ROLE_NAME}"
-echo "Cognito pool:    ${COGNITO_USER_POOL_NAME}"
+echo "Region:                ${AWS_REGION}"
+echo "Image bucket:          ${IMAGE_BUCKET}"
+echo "Frontend bucket:       ${FRONTEND_BUCKET}"
+echo "Lambda function:       ${LAMBDA_FUNCTION_NAME}"
+echo "Thumbnail Lambda:      ${THUMBNAIL_LAMBDA_FUNCTION_NAME}"
+echo "Lambda role:           ${LAMBDA_ROLE_NAME}"
+echo "Cognito pool:          ${COGNITO_USER_POOL_NAME}"
 echo ""
 
 ########################################
@@ -56,6 +58,30 @@ zip -qr "${ZIP_PATH}" dist package.json node_modules
 
 cd "${ROOT_DIR}"
 echo "✅ 后端打包完成"
+echo ""
+
+########################################
+# 1.5. 构建缩略图生成 Lambda 函数
+########################################
+echo "[1.5] 构建缩略图生成 Lambda 函数..."
+
+cd "${ROOT_DIR}/backend/thumbnail-generator"
+
+if [ ! -d node_modules ]; then
+  echo "  安装缩略图 Lambda 依赖..."
+  npm install
+fi
+
+echo "  编译 TypeScript..."
+npm run build
+
+THUMBNAIL_ZIP_PATH="${ROOT_DIR}/backend/thumbnail-generator.zip"
+echo "  打包为 ${THUMBNAIL_ZIP_PATH} ..."
+rm -f "${THUMBNAIL_ZIP_PATH}"
+zip -qr "${THUMBNAIL_ZIP_PATH}" dist package.json node_modules
+
+cd "${ROOT_DIR}"
+echo "✅ 缩略图 Lambda 打包完成"
 echo ""
 
 ########################################
@@ -254,12 +280,12 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
     --function-name "${LAMBDA_FUNCTION_NAME}" \
     --zip-file fileb://"${ZIP_PATH}" \
     --region "${AWS_REGION}" >/dev/null
-  
+
   echo "  等待函数更新完成..."
   aws lambda wait function-updated \
     --function-name "${LAMBDA_FUNCTION_NAME}" \
     --region "${AWS_REGION}"
-  
+
   # Wait a bit more and check function state before updating configuration
   echo "  检查函数状态..."
   MAX_RETRIES=10
@@ -270,14 +296,14 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
       --region "${AWS_REGION}" \
       --query 'Configuration.State' \
       --output text 2>/dev/null)
-    
+
     if [ "${FUNCTION_STATE}" = "Active" ]; then
       LAST_UPDATE_STATUS=$(aws lambda get-function \
         --function-name "${LAMBDA_FUNCTION_NAME}" \
         --region "${AWS_REGION}" \
         --query 'Configuration.LastUpdateStatus' \
         --output text 2>/dev/null)
-      
+
       if [ "${LAST_UPDATE_STATUS}" = "Successful" ] || [ "${LAST_UPDATE_STATUS}" = "InProgress" ]; then
         # If still in progress, wait a bit more
         if [ "${LAST_UPDATE_STATUS}" = "InProgress" ]; then
@@ -289,22 +315,22 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
         break
       fi
     fi
-    
+
     echo "    等待函数就绪... (${RETRY_COUNT}/${MAX_RETRIES})"
     sleep 2
     RETRY_COUNT=$((RETRY_COUNT + 1))
   done
-  
+
   if [ ${RETRY_COUNT} -ge ${MAX_RETRIES} ]; then
     echo "  ⚠️  警告: 函数状态检查超时，但继续尝试更新配置..."
   fi
-  
+
   echo "  更新函数配置..."
   # Retry configuration update with exponential backoff
   MAX_CONFIG_RETRIES=5
   CONFIG_RETRY_COUNT=0
   CONFIG_UPDATE_SUCCESS=false
-  
+
   while [ ${CONFIG_RETRY_COUNT} -lt ${MAX_CONFIG_RETRIES} ]; do
     UPDATE_OUTPUT=$(aws lambda update-function-configuration \
       --function-name "${LAMBDA_FUNCTION_NAME}" \
@@ -316,7 +342,7 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
       --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL}}" \
       --region "${AWS_REGION}" 2>&1)
     UPDATE_EXIT_CODE=$?
-    
+
     if [ ${UPDATE_EXIT_CODE} -eq 0 ]; then
       CONFIG_UPDATE_SUCCESS=true
       break
@@ -335,7 +361,7 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
       break
     fi
   done
-  
+
   if [ "${CONFIG_UPDATE_SUCCESS}" = "true" ]; then
     echo "  等待配置更新完成..."
     aws lambda wait function-updated \
@@ -354,7 +380,7 @@ else
     --zip-file fileb://"${ZIP_PATH}" \
     --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL}}" \
     --region "${AWS_REGION}" >/dev/null
-  
+
   echo "  等待函数创建完成..."
   aws lambda wait function-active \
     --function-name "${LAMBDA_FUNCTION_NAME}" \
@@ -387,6 +413,192 @@ API_URL="${FUNCTION_URL%/}/api"
 echo "  Function URL: ${FUNCTION_URL}"
 echo "  API URL:      ${API_URL}"
 echo "✅ Lambda 就绪"
+echo ""
+
+########################################
+# 4.5. 创建/更新缩略图生成 Lambda 函数
+########################################
+echo "[4.5] 创建/更新缩略图生成 Lambda 函数: ${THUMBNAIL_LAMBDA_FUNCTION_NAME}"
+
+if aws lambda get-function --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+  echo "  函数已存在，更新代码..."
+  aws lambda update-function-code \
+    --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" \
+    --zip-file fileb://"${THUMBNAIL_ZIP_PATH}" \
+    --region "${AWS_REGION}" >/dev/null
+
+  echo "  等待函数更新完成..."
+  aws lambda wait function-updated \
+    --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" \
+    --region "${AWS_REGION}"
+
+  echo "  更新函数配置..."
+  aws lambda update-function-configuration \
+    --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" \
+    --role "${LAMBDA_ROLE_ARN}" \
+    --runtime nodejs20.x \
+    --handler dist/handler.handler \
+    --timeout 30 \
+    --memory-size 512 \
+    --environment "Variables={S3_BUCKET=${IMAGE_BUCKET}}" \
+    --region "${AWS_REGION}" >/dev/null 2>&1 || true
+
+  echo "  等待配置更新完成..."
+  aws lambda wait function-updated \
+    --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" \
+    --region "${AWS_REGION}" || true
+else
+  echo "  函数不存在，创建中..."
+  aws lambda create-function \
+    --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" \
+    --runtime nodejs20.x \
+    --role "${LAMBDA_ROLE_ARN}" \
+    --handler dist/handler.handler \
+    --timeout 30 \
+    --memory-size 512 \
+    --zip-file fileb://"${THUMBNAIL_ZIP_PATH}" \
+    --environment "Variables={S3_BUCKET=${IMAGE_BUCKET}}" \
+    --region "${AWS_REGION}" >/dev/null
+
+  echo "  等待函数创建完成..."
+  aws lambda wait function-active \
+    --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" \
+    --region "${AWS_REGION}"
+fi
+
+THUMBNAIL_LAMBDA_ARN="arn:aws:lambda:${AWS_REGION}:${ACCOUNT_ID}:function:${THUMBNAIL_LAMBDA_FUNCTION_NAME}"
+
+echo "  函数 ARN: ${THUMBNAIL_LAMBDA_ARN}"
+echo "✅ 缩略图 Lambda 就绪"
+echo ""
+
+########################################
+# 4.6. 配置 S3 事件通知触发缩略图 Lambda
+########################################
+echo "[4.6] 配置 S3 事件通知..."
+
+# 检查是否已存在事件通知配置
+EXISTING_NOTIFICATION=$(aws s3api get-bucket-notification-configuration \
+  --bucket "${IMAGE_BUCKET}" \
+  --region "${AWS_REGION}" 2>/dev/null || echo "{}")
+
+# 检查 Lambda 配置是否已存在
+LAMBDA_CONFIG_EXISTS=$(echo "${EXISTING_NOTIFICATION}" | grep -q "${THUMBNAIL_LAMBDA_ARN}" && echo "true" || echo "false")
+
+if [ "${LAMBDA_CONFIG_EXISTS}" = "true" ]; then
+  echo "  S3 事件通知已配置，跳过"
+else
+  echo "  配置 S3 事件通知..."
+
+  # 授予 S3 权限调用 Lambda
+  echo "  授予 S3 权限调用 Lambda..."
+  aws lambda add-permission \
+    --function-name "${THUMBNAIL_LAMBDA_FUNCTION_NAME}" \
+    --principal s3.amazonaws.com \
+    --statement-id "s3-trigger-${IMAGE_BUCKET}" \
+    --action "lambda:InvokeFunction" \
+    --source-arn "arn:aws:s3:::${IMAGE_BUCKET}" \
+    --source-account "${ACCOUNT_ID}" \
+    --region "${AWS_REGION}" >/dev/null 2>&1 || echo "  权限可能已存在，继续..."
+
+  # 配置 S3 事件通知
+  # 注意：S3 事件通知的 Filter 不支持排除前缀，所以我们使用 Lambda 函数内部逻辑来处理
+  # Lambda 函数会跳过 thumbnails/ 前缀的文件，避免递归触发
+  # 我们为每种图片格式创建单独的配置，因为 S3 不支持 OR 条件
+
+  NOTIFICATION_CONFIG=$(cat <<EOF
+{
+  "LambdaFunctionConfigurations": [
+    {
+      "Id": "ThumbnailGeneratorTriggerJpg",
+      "LambdaFunctionArn": "${THUMBNAIL_LAMBDA_ARN}",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "Suffix",
+              "Value": ".jpg"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "Id": "ThumbnailGeneratorTriggerJpeg",
+      "LambdaFunctionArn": "${THUMBNAIL_LAMBDA_ARN}",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "Suffix",
+              "Value": ".jpeg"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "Id": "ThumbnailGeneratorTriggerPng",
+      "LambdaFunctionArn": "${THUMBNAIL_LAMBDA_ARN}",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "Suffix",
+              "Value": ".png"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "Id": "ThumbnailGeneratorTriggerGif",
+      "LambdaFunctionArn": "${THUMBNAIL_LAMBDA_ARN}",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "Suffix",
+              "Value": ".gif"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "Id": "ThumbnailGeneratorTriggerWebp",
+      "LambdaFunctionArn": "${THUMBNAIL_LAMBDA_ARN}",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [
+            {
+              "Name": "Suffix",
+              "Value": ".webp"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
+EOF
+)
+
+  echo "${NOTIFICATION_CONFIG}" > /tmp/s3-notification-config.json
+  aws s3api put-bucket-notification-configuration \
+    --bucket "${IMAGE_BUCKET}" \
+    --notification-configuration file:///tmp/s3-notification-config.json \
+    --region "${AWS_REGION}" >/dev/null
+  rm -f /tmp/s3-notification-config.json
+
+  echo "✅ S3 事件通知配置完成"
+fi
+
 echo ""
 
 ########################################

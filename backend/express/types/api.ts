@@ -4,6 +4,7 @@ export interface S3ImageResponse {
   size: number;
   lastModified: Date;
   url: string;
+  thumbnailUrl?: string;
   folder?: string;
   tags: string[];
 }

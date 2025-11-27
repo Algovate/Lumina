@@ -23,6 +23,35 @@ const s3Client = new S3Client({
 });
 
 const BUCKET_NAME = process.env.S3_BUCKET || '';
+const THUMBNAIL_PREFIX = 'thumbnails/';
+
+/**
+ * Get thumbnail key for an image
+ */
+function getThumbnailKey(originalKey: string): string {
+  return `${THUMBNAIL_PREFIX}${originalKey}`;
+}
+
+/**
+ * Check if thumbnail exists for an image
+ */
+async function thumbnailExists(thumbnailKey: string): Promise<boolean> {
+  try {
+    const headCommand = new HeadObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: thumbnailKey,
+    });
+    await s3Client.send(headCommand);
+    return true;
+  } catch (error: any) {
+    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+      return false;
+    }
+    // Log other errors but don't fail
+    logger.error(`Error checking thumbnail existence for ${thumbnailKey}:`, error);
+    return false;
+  }
+}
 
 /**
  * Get tags for an S3 object
@@ -89,7 +118,7 @@ router.get('/list', async (req, res) => {
         const batch = response.Contents.slice(i, i + batchSize);
         await Promise.all(
           batch.map(async (object) => {
-            if (object.Key && !object.Key.endsWith('/')) {
+            if (object.Key && !object.Key.endsWith('/') && !object.Key.startsWith(THUMBNAIL_PREFIX)) {
               try {
                 // 生成预签名 URL
                 const getCommand = new GetObjectCommand({
@@ -97,6 +126,22 @@ router.get('/list', async (req, res) => {
                   Key: object.Key,
                 });
                 const url = await getSignedUrl(s3Client, getCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
+
+                // 检查并生成缩略图 URL
+                let thumbnailUrl: string | undefined;
+                const thumbnailKey = getThumbnailKey(object.Key);
+                if (await thumbnailExists(thumbnailKey)) {
+                  try {
+                    const thumbnailCommand = new GetObjectCommand({
+                      Bucket: BUCKET_NAME,
+                      Key: thumbnailKey,
+                    });
+                    thumbnailUrl = await getSignedUrl(s3Client, thumbnailCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
+                  } catch (error) {
+                    logger.error(`Error generating thumbnail URL for ${thumbnailKey}:`, error);
+                    // Continue without thumbnail URL
+                  }
+                }
 
                 // 获取标签
                 const tags = await getObjectTags(object.Key);
@@ -107,6 +152,7 @@ router.get('/list', async (req, res) => {
                   size: object.Size || 0,
                   lastModified: object.LastModified || new Date(),
                   url,
+                  thumbnailUrl,
                   folder: prefix || undefined,
                   tags,
                 });
@@ -119,12 +165,29 @@ router.get('/list', async (req, res) => {
                     Key: object.Key,
                   });
                   const url = await getSignedUrl(s3Client, getCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
+                  
+                  // 尝试获取缩略图 URL
+                  let thumbnailUrl: string | undefined;
+                  const thumbnailKey = getThumbnailKey(object.Key);
+                  if (await thumbnailExists(thumbnailKey)) {
+                    try {
+                      const thumbnailCommand = new GetObjectCommand({
+                        Bucket: BUCKET_NAME,
+                        Key: thumbnailKey,
+                      });
+                      thumbnailUrl = await getSignedUrl(s3Client, thumbnailCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
+                    } catch (error) {
+                      // Ignore thumbnail URL errors in fallback
+                    }
+                  }
+                  
                   images.push({
                     key: object.Key,
                     name: object.Key.split('/').pop() || object.Key,
                     size: object.Size || 0,
                     lastModified: object.LastModified || new Date(),
                     url,
+                    thumbnailUrl,
                     folder: prefix || undefined,
                     tags: [],
                   });
@@ -254,12 +317,30 @@ router.delete('/delete', async (req, res) => {
       return res.status(500).json({ error: 'S3_BUCKET not configured' });
     }
 
+    // Delete the original file
     const command = new DeleteObjectCommand({
       Bucket: BUCKET_NAME,
       Key: key,
     });
 
     await s3Client.send(command);
+
+    // Also delete the thumbnail if it exists
+    const thumbnailKey = getThumbnailKey(key);
+    try {
+      if (await thumbnailExists(thumbnailKey)) {
+        const thumbnailCommand = new DeleteObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: thumbnailKey,
+        });
+        await s3Client.send(thumbnailCommand);
+        logger.info(`Deleted thumbnail: ${thumbnailKey}`);
+      }
+    } catch (error) {
+      // Log error but don't fail the request if thumbnail deletion fails
+      logger.error(`Error deleting thumbnail ${thumbnailKey}:`, error);
+    }
+
     res.json({ success: true });
   } catch (error) {
     logger.error('Error deleting file:', error);
@@ -339,6 +420,10 @@ router.get('/folders', async (req, res) => {
     if (response.CommonPrefixes) {
       for (const prefixObj of response.CommonPrefixes) {
         if (prefixObj.Prefix) {
+          // 过滤掉 thumbnails/ 前缀的文件夹
+          if (prefixObj.Prefix.startsWith(THUMBNAIL_PREFIX)) {
+            continue;
+          }
           const folderName = prefixObj.Prefix.replace(prefix, '').replace('/', '');
           folders.push({
             name: folderName,
