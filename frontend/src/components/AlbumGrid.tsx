@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { S3Image } from '../types';
 import { ImageCard } from './ImageCard';
 
@@ -8,6 +9,9 @@ interface AlbumGridProps {
   onTagClick?: (tag: string) => void;
   selectedImages?: Set<string>;
   loading?: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 export const AlbumGrid = ({
@@ -17,7 +21,44 @@ export const AlbumGrid = ({
   onTagClick,
   selectedImages,
   loading,
+  loadingMore = false,
+  hasMore = false,
+  onLoadMore,
 }: AlbumGridProps) => {
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    if (!onLoadMore || !hasMore || loadingMore) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry.isIntersecting && hasMore && !loadingMore) {
+          onLoadMore();
+        }
+      },
+      {
+        root: null,
+        rootMargin: '100px', // 提前100px开始加载
+        threshold: 0.1,
+      }
+    );
+
+    const currentRef = loadMoreRef.current;
+    if (currentRef) {
+      observer.observe(currentRef);
+    }
+
+    return () => {
+      if (currentRef) {
+        observer.unobserve(currentRef);
+      }
+    };
+  }, [onLoadMore, hasMore, loadingMore]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -54,18 +95,36 @@ export const AlbumGrid = ({
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 p-4">
-      {images.map((image) => (
-        <ImageCard
-          key={image.key}
-          image={image}
-          onClick={() => onImageClick(image)}
-          onDelete={onImageDelete ? () => onImageDelete(image) : undefined}
-          onTagClick={onTagClick}
-          isSelected={selectedImages?.has(image.key)}
-        />
-      ))}
-    </div>
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 p-4">
+        {images.map((image) => (
+          <ImageCard
+            key={image.key}
+            image={image}
+            onClick={() => onImageClick(image)}
+            onDelete={onImageDelete ? () => onImageDelete(image) : undefined}
+            onTagClick={onTagClick}
+            isSelected={selectedImages?.has(image.key)}
+          />
+        ))}
+      </div>
+      {/* Infinite scroll trigger element */}
+      {hasMore && (
+        <div ref={loadMoreRef} className="flex items-center justify-center py-8">
+          {loadingMore && (
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+              <p className="mt-2 text-sm text-gray-600">加载更多...</p>
+            </div>
+          )}
+        </div>
+      )}
+      {!hasMore && images.length > 0 && (
+        <div className="flex items-center justify-center py-8">
+          <p className="text-sm text-gray-500">已加载全部图片</p>
+        </div>
+      )}
+    </>
   );
 };
 

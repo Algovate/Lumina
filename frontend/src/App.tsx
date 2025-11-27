@@ -31,7 +31,15 @@ function App() {
   );
 
   // 只在已认证时加载数据
-  const { images, loading, error: imagesError, refreshImages } = useS3Images(
+  const { 
+    images, 
+    loading, 
+    loadingMore,
+    hasMore,
+    loadMore,
+    error: imagesError, 
+    refreshImages 
+  } = useS3Images(
     currentFolder,
     { enabled: isAuthenticated }
   );
@@ -380,6 +388,9 @@ function App() {
               onImageDelete={handleDeleteImage}
               onTagClick={handleTagClick}
               loading={loading}
+              loadingMore={loadingMore}
+              hasMore={hasMore}
+              onLoadMore={loadMore}
             />
           </main>
         </div>

@@ -27,9 +27,56 @@ class S3Service {
   }
 
   /**
+   * List images with pagination support
+   * Returns paginated response with metadata about whether there are more pages
+   */
+  async listImagesPaginated(
+    prefix: string = '',
+    maxKeys?: number,
+    continuationToken?: string
+  ): Promise<PaginatedImageResponse> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const params = new URLSearchParams({ prefix: encodeURIComponent(prefix) });
+      if (maxKeys) params.append('maxKeys', maxKeys.toString());
+      if (continuationToken) params.append('continuationToken', continuationToken);
+      
+      const response = await fetch(`${this.apiUrl}/s3/list?${params.toString()}`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('未授权，请重新登录');
+        }
+        throw new Error(`Failed to list images: ${response.statusText}`);
+      }
+
+      const data: PaginatedImageResponse = await response.json();
+      
+      // 确保每个图片都有 URL
+      for (const image of data.images || []) {
+        if (!image.url) {
+          try {
+            image.url = await this.getPresignedUrl(image.key);
+          } catch (error) {
+            logger.error(`Failed to get presigned URL for ${image.key}:`, error);
+          }
+        }
+      }
+      
+      return data;
+    } catch (error) {
+      logger.error('Error listing images:', error);
+      throw error;
+    }
+  }
+
+  /**
    * List all images in the bucket, optionally filtered by prefix (folder)
    * Note: This method loads all images by fetching multiple pages if needed
-   * For better performance with large buckets, consider implementing pagination in the UI
+   * For better performance with large buckets, use listImagesPaginated instead
    */
   async listImages(prefix: string = '', maxKeys?: number, continuationToken?: string): Promise<S3Image[]> {
     try {
