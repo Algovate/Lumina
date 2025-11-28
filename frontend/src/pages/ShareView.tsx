@@ -144,7 +144,7 @@ export const ShareView = () => {
                 src={shareInfo.imageUrl}
                 alt={shareInfo.name}
                 className="max-w-full max-h-[70vh] object-contain"
-                onError={(e) => {
+                onError={() => {
                   logger.error('Failed to load shared image');
                   setError('无法加载图片');
                 }}
