@@ -890,7 +890,208 @@ aws s3 sync "${ROOT_DIR}/frontend/dist/" "s3://${FRONTEND_BUCKET}/" --delete
 
 SITE_URL="http://${FRONTEND_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
 
+echo "✅ 前端 bucket 就绪"
+echo ""
+
+########################################
+# 7. 创建/确认 CloudFront Distribution (HTTPS)
+########################################
+echo "[7] 创建/确认 CloudFront Distribution (HTTPS)..."
+
+# 检查是否已存在针对该 Bucket 的 Distribution
+# 注意：这里简单通过 Origin Domain Name 来查找
+S3_ORIGIN_DOMAIN="${FRONTEND_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
+
+EXISTING_DIST_ID=$(aws cloudfront list-distributions \
+  --query "DistributionList.Items[?Origins.Items[0].DomainName=='${S3_ORIGIN_DOMAIN}'].Id" \
+  --output text 2>/dev/null | head -1)
+
+if [ -n "${EXISTING_DIST_ID}" ] && [ "${EXISTING_DIST_ID}" != "None" ]; then
+  echo "  Distribution 已存在: ${EXISTING_DIST_ID}"
+  CLOUDFRONT_DIST_ID="${EXISTING_DIST_ID}"
+else
+  echo "  创建 CloudFront Distribution (这可能需要几分钟)..."
+  # 创建 Distribution 配置
+  # 注意：这里使用 S3 Website Endpoint 作为 Origin，而不是 S3 Bucket Endpoint
+  # 这样可以利用 S3 Website 的路由规则（如 index.html, error.html）
+  
+  CLOUDFRONT_DIST_ID=$(aws cloudfront create-distribution \
+    --distribution-config "{
+      \"CallerReference\": \"$(date +%s)\",
+      \"Aliases\": {\"Quantity\": 0},
+      \"DefaultRootObject\": \"index.html\",
+      \"Origins\": {
+        \"Quantity\": 1,
+        \"Items\": [
+          {
+            \"Id\": \"S3-${FRONTEND_BUCKET}\",
+            \"DomainName\": \"${S3_ORIGIN_DOMAIN}\",
+            \"OriginPath\": \"\",
+            \"CustomHeaders\": {\"Quantity\": 0},
+            \"CustomOriginConfig\": {
+              \"HTTPPort\": 80,
+              \"HTTPSPort\": 443,
+              \"OriginProtocolPolicy\": \"http-only\",
+              \"OriginSslProtocols\": {
+                \"Quantity\": 3,
+                \"Items\": [\"TLSv1\", \"TLSv1.1\", \"TLSv1.2\"]
+              },
+              \"OriginReadTimeout\": 30,
+              \"OriginKeepaliveTimeout\": 5
+            }
+          }
+        ]
+      },
+      \"OriginGroups\": {\"Quantity\": 0},
+      \"DefaultCacheBehavior\": {
+        \"TargetOriginId\": \"S3-${FRONTEND_BUCKET}\",
+        \"ForwardedValues\": {
+          \"QueryString\": false,
+          \"Cookies\": {\"Forward\": \"none\"},
+          \"Headers\": {\"Quantity\": 0},
+          \"QueryStringCacheKeys\": {\"Quantity\": 0}
+        },
+        \"TrustedSigners\": {\"Enabled\": false, \"Quantity\": 0},
+        \"ViewerProtocolPolicy\": \"redirect-to-https\",
+        \"MinTTL\": 0,
+        \"AllowedMethods\": {
+          \"Quantity\": 2,
+          \"Items\": [\"GET\", \"HEAD\"],
+          \"CachedMethods\": {
+            \"Quantity\": 2,
+            \"Items\": [\"GET\", \"HEAD\"]
+          }
+        },
+        \"SmoothStreaming\": false,
+        \"DefaultTTL\": 86400,
+        \"MaxTTL\": 31536000,
+        \"Compress\": true,
+        \"LambdaFunctionAssociations\": {\"Quantity\": 0},
+        \"FieldLevelEncryptionId\": \"\"
+      },
+      \"CacheBehaviors\": {\"Quantity\": 0},
+      \"CustomErrorResponses\": {
+        \"Quantity\": 2,
+        \"Items\": [
+          {
+            \"ErrorCode\": 403,
+            \"ResponsePagePath\": \"/index.html\",
+            \"ResponseCode\": \"200\",
+            \"ErrorCachingMinTTL\": 300
+          },
+          {
+            \"ErrorCode\": 404,
+            \"ResponsePagePath\": \"/index.html\",
+            \"ResponseCode\": \"200\",
+            \"ErrorCachingMinTTL\": 300
+          }
+        ]
+      },
+      \"Comment\": \"Lumina Frontend (${FRONTEND_BUCKET})\",
+      \"Logging\": {
+        \"Enabled\": false,
+        \"IncludeCookies\": false,
+        \"Bucket\": \"\",
+        \"Prefix\": \"\"
+      },
+      \"PriceClass\": \"PriceClass_All\",
+      \"Enabled\": true
+    }" \
+    --query 'Distribution.Id' \
+    --output text)
+    
+  echo "  已创建 Distribution: ${CLOUDFRONT_DIST_ID}"
+fi
+
+# 获取 CloudFront 域名
+if [ -n "${CLOUDFRONT_DIST_ID}" ] && [ "${CLOUDFRONT_DIST_ID}" != "None" ]; then
+  CLOUDFRONT_DOMAIN=$(aws cloudfront get-distribution \
+    --id "${CLOUDFRONT_DIST_ID}" \
+    --query 'Distribution.DomainName' \
+    --output text 2>/dev/null)
+  
+  if [ -n "${CLOUDFRONT_DOMAIN}" ]; then
+    HTTPS_SITE_URL="https://${CLOUDFRONT_DOMAIN}"
+    echo "  CloudFront 域名: ${HTTPS_SITE_URL}"
+    echo "✅ CloudFront 就绪"
+  else
+    echo "  ⚠️  警告: 无法获取 CloudFront 域名，跳过 HTTPS 配置"
+    HTTPS_SITE_URL=""
+  fi
+else
+  echo "  ⚠️  警告: CloudFront Distribution 未创建，跳过 HTTPS 配置"
+  HTTPS_SITE_URL=""
+fi
+echo ""
+
+########################################
+# 8. 更新 Cognito 和 CORS 配置以支持 HTTPS（如果 CloudFront 已创建）
+########################################
+if [ -n "${HTTPS_SITE_URL}" ]; then
+  echo "[8] 更新配置以支持 HTTPS..."
+  
+  # 更新 Cognito Callback URLs
+  echo "  更新 Cognito Callback URLs..."
+  aws cognito-idp update-user-pool-client \
+    --user-pool-id "${COGNITO_USER_POOL_ID}" \
+    --client-id "${COGNITO_CLIENT_ID}" \
+    --callback-urls "http://localhost:5173/,http://localhost:5173/auth/callback,${HTTPS_SITE_URL}/,${HTTPS_SITE_URL}/auth/callback" \
+    --logout-urls "http://localhost:5173/,http://localhost:5173/logout,${HTTPS_SITE_URL}/,${HTTPS_SITE_URL}/logout" \
+    --region "${AWS_REGION}" >/dev/null
+  
+  # 更新 Lambda CORS 配置
+  echo "  更新 Lambda CORS 配置..."
+  aws lambda update-function-url-config \
+    --function-name "${LAMBDA_FUNCTION_NAME}" \
+    --cors "{\"AllowOrigins\":[\"${FRONTEND_ORIGIN}\",\"${HTTPS_SITE_URL}\",\"http://localhost:5173\"],\"AllowMethods\":[\"*\"],\"AllowHeaders\":[\"*\"],\"ExposeHeaders\":[\"*\"],\"MaxAge\":86400}" \
+    --region "${AWS_REGION}" >/dev/null
+  
+  # 更新 S3 CORS 配置
+  echo "  更新 S3 CORS 配置..."
+  CORS_CONFIG=$(cat <<EOF
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "${FRONTEND_ORIGIN}",
+        "${HTTPS_SITE_URL}",
+        "http://localhost:5173"
+      ],
+      "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag", "x-amz-server-side-encryption", "x-amz-request-id", "x-amz-id-2"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}
+EOF
+)
+echo "${CORS_CONFIG}" > /tmp/s3-cors-config.json
+aws s3api put-bucket-cors \
+  --bucket "${IMAGE_BUCKET}" \
+  --cors-configuration file:///tmp/s3-cors-config.json \
+  --region "${AWS_REGION}" >/dev/null 2>&1
+rm -f /tmp/s3-cors-config.json
+  
+  echo "✅ HTTPS 配置完成"
+  echo ""
+  echo "注意: CloudFront 分发可能需要 5-15 分钟才能完全生效。"
+else
+  echo "[8] 跳过 HTTPS 配置（CloudFront 未创建或未就绪）"
+fi
+echo ""
+
+########################################
+# 9. 上传前端静态文件
+########################################
+echo "[9] 同步前端静态文件到 S3..."
+
+aws s3 sync "${ROOT_DIR}/frontend/dist/" "s3://${FRONTEND_BUCKET}/" --delete
+
 echo ""
 echo "✅ 部署完成！"
-echo "前端地址: ${SITE_URL}"
-echo "API URL:   ${API_URL}"
+echo "前端地址 (HTTP):  ${FRONTEND_ORIGIN}"
+if [ -n "${HTTPS_SITE_URL}" ]; then
+  echo "前端地址 (HTTPS): ${HTTPS_SITE_URL}"
+fi
+echo "API URL:          ${API_URL}"
