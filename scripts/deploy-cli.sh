@@ -15,6 +15,7 @@ THUMBNAIL_LAMBDA_FUNCTION_NAME="${THUMBNAIL_LAMBDA_FUNCTION_NAME:-LuminaThumbnai
 LAMBDA_ROLE_NAME="${LAMBDA_ROLE_NAME:-LuminaLambdaCliRole}"
 COGNITO_USER_POOL_NAME="${COGNITO_USER_POOL_NAME:-lumina-user-pool-cli}"
 DYNAMODB_TABLE_NAME="${DYNAMODB_TABLE_NAME:-lumina-images}"
+SHARES_TABLE_NAME="${SHARES_TABLE_NAME:-lumina-shares}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -27,6 +28,7 @@ echo "Thumbnail Lambda:      ${THUMBNAIL_LAMBDA_FUNCTION_NAME}"
 echo "Lambda role:           ${LAMBDA_ROLE_NAME}"
 echo "Cognito pool:          ${COGNITO_USER_POOL_NAME}"
 echo "DynamoDB table:        ${DYNAMODB_TABLE_NAME}"
+echo "Shares table:          ${SHARES_TABLE_NAME}"
 echo ""
 
 ########################################
@@ -344,6 +346,33 @@ else
 fi
 echo ""
 
+########################################
+# 3.6. 创建/确认 Shares DynamoDB 表
+########################################
+echo "[3.6] 创建/确认 Shares DynamoDB 表: ${SHARES_TABLE_NAME}"
+
+if aws dynamodb describe-table --table-name "${SHARES_TABLE_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+  echo "  表已存在，跳过创建"
+else
+  echo "  创建 Shares DynamoDB 表..."
+  aws dynamodb create-table \
+    --table-name "${SHARES_TABLE_NAME}" \
+    --attribute-definitions \
+      AttributeName=shareToken,AttributeType=S \
+    --key-schema \
+      AttributeName=shareToken,KeyType=HASH \
+    --billing-mode PROVISIONED \
+    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+    --region "${AWS_REGION}" >/dev/null
+
+  echo "  等待表创建完成..."
+  aws dynamodb wait table-exists \
+    --table-name "${SHARES_TABLE_NAME}" \
+    --region "${AWS_REGION}"
+  echo "✅ Shares DynamoDB 表创建完成"
+fi
+echo ""
+
 # 构建前端 URL（用于 Lambda CORS 配置）
 FRONTEND_URL="http://${FRONTEND_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
 
@@ -420,7 +449,7 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
         --handler dist/lambda.handler \
         --timeout 30 \
         --memory-size 512 \
-        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
+        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME},SHARES_TABLE_NAME=${SHARES_TABLE_NAME}}" \
         --region "${AWS_REGION}" 2>&1)
       UPDATE_EXIT_CODE=$?
     elif command -v timeout >/dev/null 2>&1; then
@@ -431,7 +460,7 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
         --handler dist/lambda.handler \
         --timeout 30 \
         --memory-size 512 \
-        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
+        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME},SHARES_TABLE_NAME=${SHARES_TABLE_NAME}}" \
         --region "${AWS_REGION}" 2>&1)
       UPDATE_EXIT_CODE=$?
     else
@@ -443,7 +472,7 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
         --handler dist/lambda.handler \
         --timeout 30 \
         --memory-size 512 \
-        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
+        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME},SHARES_TABLE_NAME=${SHARES_TABLE_NAME}}" \
         --region "${AWS_REGION}" 2>&1)
       UPDATE_EXIT_CODE=$?
     fi
@@ -522,7 +551,7 @@ else
     --timeout 30 \
     --memory-size 512 \
     --zip-file fileb://"${ZIP_PATH}" \
-    --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
+    --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME},SHARES_TABLE_NAME=${SHARES_TABLE_NAME}}" \
     --region "${AWS_REGION}" >/dev/null
 
   echo "  等待函数创建完成..."

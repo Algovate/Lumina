@@ -52,27 +52,60 @@ export const ShareDialog = ({
   const handleCopyLink = async () => {
     if (!shareUrl) return;
 
+    // Check if Clipboard API is available
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      } catch (err) {
+        logger.error('Failed to copy link with Clipboard API:', err);
+        // Fall through to fallback method
+      }
+    }
+
+    // Fallback: use document.execCommand (works in non-secure contexts)
     try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      logger.error('Failed to copy link:', err);
-      // Fallback: select text
       const textArea = document.createElement('textarea');
       textArea.value = shareUrl;
       textArea.style.position = 'fixed';
+      textArea.style.top = '0';
+      textArea.style.left = '0';
       textArea.style.opacity = '0';
+      textArea.style.pointerEvents = 'none';
+      textArea.setAttribute('readonly', '');
       document.body.appendChild(textArea);
-      textArea.select();
-      try {
-        document.execCommand('copy');
+      
+      // For iOS
+      if (navigator.userAgent.match(/ipad|iphone/i)) {
+        const range = document.createRange();
+        range.selectNodeContents(textArea);
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        textArea.setSelectionRange(0, 999999);
+      } else {
+        textArea.select();
+      }
+      
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      
+      if (successful) {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      } catch (fallbackErr) {
-        logger.error('Fallback copy failed:', fallbackErr);
+      } else {
+        logger.error('Fallback copy command failed');
+        // Last resort: show the URL in an alert so user can manually copy
+        alert(`请手动复制链接:\n${shareUrl}`);
       }
-      document.body.removeChild(textArea);
+    } catch (fallbackErr) {
+      logger.error('Fallback copy failed:', fallbackErr);
+      // Last resort: show the URL in an alert so user can manually copy
+      alert(`请手动复制链接:\n${shareUrl}`);
     }
   };
 

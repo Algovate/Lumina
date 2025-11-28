@@ -9,12 +9,12 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
-import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { validateS3Key } from './utils/validation';
-import { getErrorMessage, getErrorName } from './types/errors';
+import { getErrorMessage } from './types/errors';
 import { S3_CONSTANTS, RATE_LIMIT_CONSTANTS } from './constants';
 import { logger } from './utils/logger';
 import { validateConfig } from './utils/configValidation';
+import { authenticate } from './middleware/auth';
 import s3Routes from './routes/s3';
 import tagsRoutes from './routes/tags';
 import shareRoutes from './routes/share';
@@ -77,106 +77,6 @@ const s3Client = new S3Client({
 });
 
 const BUCKET_NAME = process.env.S3_BUCKET || '';
-
-// Cognito JWT Verifier - 只在配置有效时创建
-let verifier: ReturnType<typeof CognitoJwtVerifier.create> | null = null;
-
-const getVerifier = () => {
-  // 检查环境变量是否配置
-  const userPoolId = process.env.COGNITO_USER_POOL_ID;
-  const clientId = process.env.COGNITO_CLIENT_ID;
-
-  if (!userPoolId || userPoolId === 'dummy_pool_id' || !clientId || clientId === 'dummy_client_id') {
-    return null;
-  }
-
-  // 如果 verifier 已创建且配置未改变，直接返回
-  if (verifier) {
-    return verifier;
-  }
-
-  // 创建 verifier
-  try {
-    verifier = CognitoJwtVerifier.create({
-      userPoolId,
-      tokenUse: "access",
-      clientId,
-    });
-    return verifier;
-  } catch (err) {
-    logger.error('Failed to create Cognito JWT Verifier:', err);
-    return null;
-  }
-};
-
-// Authentication Middleware
-const authenticate = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
-  }
-
-  const token = authHeader.substring(7);
-
-  // 获取 verifier（如果配置有效）
-  const jwtVerifier = getVerifier();
-  
-  if (!jwtVerifier) {
-    logger.error('COGNITO_USER_POOL_ID or COGNITO_CLIENT_ID not configured');
-    // 在开发环境中返回更友好的错误信息，生产环境不暴露配置详情
-    const isDev = process.env.NODE_ENV !== 'production';
-    const errorResponse: Record<string, unknown> = { 
-      error: 'Server configuration error: Authentication service not available',
-    };
-    
-    if (isDev) {
-      errorResponse.message = 'Please configure COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID in backend/express/.env file';
-      errorResponse.details = {
-        COGNITO_USER_POOL_ID: process.env.COGNITO_USER_POOL_ID ? 'set' : 'not set',
-        COGNITO_CLIENT_ID: process.env.COGNITO_CLIENT_ID ? 'set' : 'not set',
-      };
-    }
-    
-    return res.status(isDev ? 503 : 500).json(errorResponse);
-  }
-
-  try {
-    // Verify the token
-    const payload = await jwtVerifier.verify(token);
-    // Attach user info to request
-    req.user = payload;
-    next();
-  } catch (err: unknown) {
-    // Log detailed error for debugging (server-side only)
-    const isDev = process.env.NODE_ENV !== 'production';
-    const errorName = getErrorName(err);
-    const errorMessage = getErrorMessage(err);
-    
-    logger.error("Token verification failed:", {
-      error: errorMessage,
-      name: errorName,
-      // Only log token preview in development
-      ...(isDev && { tokenPreview: token.substring(0, 20) + '...' }),
-      // Never log actual credentials, only whether they're configured
-      userPoolIdConfigured: !!process.env.COGNITO_USER_POOL_ID,
-      clientIdConfigured: !!process.env.COGNITO_CLIENT_ID,
-    });
-    
-    // Provide user-friendly error messages without exposing sensitive details
-    let userErrorMessage = 'Unauthorized: Invalid token';
-    if (errorName === 'TokenExpiredError') {
-      userErrorMessage = 'Token expired. Please login again.';
-    } else if (errorName === 'JsonWebTokenError') {
-      userErrorMessage = 'Invalid token format.';
-    } else if (isDev && errorMessage) {
-      // Only include detailed error message in development
-      userErrorMessage = `Token verification failed: ${errorMessage}`;
-    }
-    
-    return res.status(401).json({ error: userErrorMessage });
-  }
-};
 
 // Health check endpoint (不需要认证)
 app.get('/health', (req, res) => {
@@ -250,11 +150,8 @@ app.use('/api/s3', authenticate, s3Routes);
 app.use('/api/s3', authenticate, tagsRoutes);
 
 // Share routes: create and delete require authentication, but view is public
-// Register public GET route (no authentication required)
-app.get('/api/share/:token', shareRoutes);
-// Register authenticated routes
-app.post('/api/share/create', authenticate, shareRoutes);
-app.delete('/api/share/:token', authenticate, shareRoutes);
+// Mount router at /api/share - routes inside will handle /create, /:token, etc.
+app.use('/api/share', shareRoutes);
 
 // Global error handler middleware - must be after all routes
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

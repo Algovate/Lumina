@@ -5,6 +5,7 @@ import { validateS3Key } from '../utils/validation';
 import { getErrorMessage } from '../types/errors';
 import { S3_CONSTANTS } from '../constants';
 import { logger } from '../utils/logger';
+import { authenticate } from '../middleware/auth';
 import {
   createShareToken,
   getShareInfo,
@@ -83,9 +84,9 @@ async function previewExists(previewKey: string): Promise<boolean> {
 /**
  * Create a share link for an image
  * POST /api/share/create
- * Requires authentication (middleware should be applied in server.ts)
+ * Requires authentication
  */
-router.post('/create', async (req, res, next) => {
+router.post('/create', authenticate, async (req, res, next) => {
   try {
     const { imageKey, expiresInDays } = req.body;
 
@@ -262,7 +263,7 @@ router.get('/:token', async (req, res) => {
  * DELETE /api/share/:token
  * Requires authentication
  */
-router.delete('/:token', async (req, res) => {
+router.delete('/:token', authenticate, async (req, res) => {
   try {
     const { token } = req.params;
 
