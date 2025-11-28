@@ -10,6 +10,7 @@ import { validateS3Key, validateTags } from '../utils/validation';
 import { getErrorMessage } from '../types/errors';
 import { S3_CONSTANTS } from '../constants';
 import { logger } from '../utils/logger';
+import { updateImageMetadata } from '../services/dynamodbService';
 
 const router = express.Router();
 
@@ -162,6 +163,17 @@ router.put('/image/:key/tags', async (req, res) => {
     });
 
     await s3Client.send(copyCommand);
+
+    // Update DynamoDB (non-blocking)
+    try {
+      await updateImageMetadata(key, {
+        tags: normalizedTags,
+        tagCount: normalizedTags.length,
+      });
+    } catch (error) {
+      // Log error but don't fail the request if DynamoDB update fails
+      logger.error(`Error updating image metadata in DynamoDB for ${key}:`, error);
+    }
 
     res.json({ success: true, tags: normalizedTags });
   } catch (error) {

@@ -12,8 +12,15 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { validateS3Key, validateS3Prefix } from '../utils/validation';
 import type { S3ImageResponse, FolderResponse } from '../types/api';
 import { getErrorMessage } from '../types/errors';
-import { S3_CONSTANTS } from '../constants';
+import { S3_CONSTANTS, DYNAMODB_CONSTANTS, type SortBy, type SortOrder } from '../constants';
 import { logger } from '../utils/logger';
+import {
+  listImagesWithSort,
+  deleteImageMetadata,
+  s3ImageToMetadata,
+  metadataToS3Image,
+  createImageMetadata,
+} from '../services/dynamodbService';
 
 const router = express.Router();
 
@@ -123,12 +130,109 @@ router.get('/list', async (req, res) => {
     }
 
     // Pagination parameters
-    const maxKeys = Math.min(parseInt(req.query.maxKeys as string) || 100, 1000); // Default 100, max 1000
+    const maxKeys = Math.min(
+      parseInt(req.query.maxKeys as string) || DYNAMODB_CONSTANTS.DEFAULT_PAGE_SIZE,
+      DYNAMODB_CONSTANTS.MAX_PAGE_SIZE
+    );
     const continuationToken = req.query.continuationToken as string | undefined;
+
+    // Sort parameters
+    const sortBy = (req.query.sortBy as SortBy) || 'date';
+    const sortOrder = (req.query.sortOrder as SortOrder) || 'desc';
+    const useDynamoDB = req.query.useDynamoDB !== 'false'; // Default to true, allow fallback
 
     if (!BUCKET_NAME) {
       return res.status(500).json({ error: 'S3_BUCKET not configured' });
     }
+
+    // Try to use DynamoDB if sort parameters are provided or useDynamoDB is true
+    if (useDynamoDB && (sortBy !== 'date' || sortOrder !== 'desc')) {
+      try {
+        // Parse lastEvaluatedKey if provided
+        let lastEvaluatedKey: Record<string, any> | undefined;
+        if (continuationToken) {
+          try {
+            lastEvaluatedKey = JSON.parse(Buffer.from(continuationToken, 'base64').toString('utf-8'));
+          } catch (e) {
+            logger.warn('Invalid continuation token format, ignoring');
+          }
+        }
+
+        const result = await listImagesWithSort(prefix, sortBy, sortOrder, maxKeys, lastEvaluatedKey);
+
+        // Generate presigned URLs for each image
+        const images: S3ImageResponse[] = await Promise.all(
+          result.items.map(async (metadata) => {
+            try {
+              const getCommand = new GetObjectCommand({
+                Bucket: BUCKET_NAME,
+                Key: metadata.key,
+              });
+              const url = await getSignedUrl(s3Client, getCommand, {
+                expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION,
+              });
+
+              // Get thumbnail and preview URLs if available
+              let thumbnailUrl: string | undefined;
+              let previewUrl: string | undefined;
+
+              if (metadata.thumbnailUrl) {
+                thumbnailUrl = metadata.thumbnailUrl;
+              } else {
+                const thumbnailKey = getThumbnailKey(metadata.key);
+                if (await thumbnailExists(thumbnailKey)) {
+                  const thumbnailCommand = new GetObjectCommand({
+                    Bucket: BUCKET_NAME,
+                    Key: thumbnailKey,
+                  });
+                  thumbnailUrl = await getSignedUrl(s3Client, thumbnailCommand, {
+                    expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION,
+                  });
+                }
+              }
+
+              if (metadata.previewUrl) {
+                previewUrl = metadata.previewUrl;
+              } else {
+                const previewKey = getPreviewKey(metadata.key);
+                if (await previewExists(previewKey)) {
+                  const previewCommand = new GetObjectCommand({
+                    Bucket: BUCKET_NAME,
+                    Key: previewKey,
+                  });
+                  previewUrl = await getSignedUrl(s3Client, previewCommand, {
+                    expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION,
+                  });
+                }
+              }
+
+              return metadataToS3Image(metadata, url);
+            } catch (error) {
+              logger.error(`Error generating presigned URL for ${metadata.key}:`, error);
+              // Return image without URL (frontend can request it separately)
+              return metadataToS3Image(metadata, '');
+            }
+          })
+        );
+
+        // Encode lastEvaluatedKey for response
+        const nextContinuationToken = result.lastEvaluatedKey
+          ? Buffer.from(JSON.stringify(result.lastEvaluatedKey)).toString('base64')
+          : null;
+
+        return res.json({
+          images,
+          isTruncated: !!result.lastEvaluatedKey,
+          nextContinuationToken,
+          keyCount: images.length,
+        });
+      } catch (dynamoError) {
+        logger.warn('DynamoDB query failed, falling back to S3 list:', dynamoError);
+        // Fall through to S3 list implementation
+      }
+    }
+
+    // Fallback to S3 list (original implementation)
 
     const command = new ListObjectsV2Command({
       Bucket: BUCKET_NAME,
@@ -191,7 +295,7 @@ router.get('/list', async (req, res) => {
                 // 获取标签
                 const tags = await getObjectTags(object.Key);
 
-                images.push({
+                const image: S3ImageResponse = {
                   key: object.Key,
                   name: object.Key.split('/').pop() || object.Key,
                   size: object.Size || 0,
@@ -201,7 +305,17 @@ router.get('/list', async (req, res) => {
                   previewUrl,
                   folder: prefix || undefined,
                   tags,
-                });
+                };
+                images.push(image);
+
+                // Try to sync to DynamoDB (non-blocking)
+                try {
+                  const metadata = s3ImageToMetadata(image, prefix);
+                  await createImageMetadata(metadata);
+                } catch (error) {
+                  // Log but don't fail - DynamoDB sync is best effort
+                  logger.debug(`Failed to sync image ${object.Key} to DynamoDB:`, error);
+                }
               } catch (error) {
                 logger.error(`Error processing image ${object.Key}:`, error);
                 // 即使获取标签或预签名 URL 失败，也尝试添加图片（不带标签和 URL）
@@ -242,7 +356,7 @@ router.get('/list', async (req, res) => {
                     }
                   }
                   
-                  images.push({
+                  const image: S3ImageResponse = {
                     key: object.Key,
                     name: object.Key.split('/').pop() || object.Key,
                     size: object.Size || 0,
@@ -252,11 +366,20 @@ router.get('/list', async (req, res) => {
                     previewUrl,
                     folder: prefix || undefined,
                     tags: [],
-                  });
+                  };
+                  images.push(image);
+
+                  // Try to sync to DynamoDB (non-blocking)
+                  try {
+                    const metadata = s3ImageToMetadata(image, prefix);
+                    await createImageMetadata(metadata);
+                  } catch (error) {
+                    logger.debug(`Failed to sync image ${object.Key} to DynamoDB:`, error);
+                  }
                 } catch (fallbackError) {
                   // 如果连预签名 URL 也获取失败，仍然添加图片但标记为需要后续获取 URL
                   logger.error(`Failed to get presigned URL for ${object.Key} even in fallback:`, fallbackError);
-                  images.push({
+                  const image: S3ImageResponse = {
                     key: object.Key,
                     name: object.Key.split('/').pop() || object.Key,
                     size: object.Size || 0,
@@ -264,7 +387,16 @@ router.get('/list', async (req, res) => {
                     url: '', // 空 URL，前端可以稍后通过 presign 端点获取
                     folder: prefix || undefined,
                     tags: [],
-                  });
+                  };
+                  images.push(image);
+
+                  // Try to sync to DynamoDB (non-blocking)
+                  try {
+                    const metadata = s3ImageToMetadata(image, prefix);
+                    await createImageMetadata(metadata);
+                  } catch (error) {
+                    logger.debug(`Failed to sync image ${object.Key} to DynamoDB:`, error);
+                  }
                 }
               }
             }
@@ -408,6 +540,14 @@ router.delete('/delete', async (req, res) => {
     } catch (error) {
       // Log error but don't fail the request if thumbnail deletion fails
       logger.error(`Error deleting thumbnail ${thumbnailKey}:`, error);
+    }
+
+    // Delete from DynamoDB (non-blocking)
+    try {
+      await deleteImageMetadata(key);
+    } catch (error) {
+      // Log error but don't fail the request if DynamoDB deletion fails
+      logger.error(`Error deleting image metadata from DynamoDB for ${key}:`, error);
     }
 
     res.json({ success: true });

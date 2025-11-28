@@ -87,7 +87,9 @@ npm run dev
 Lumina/
 ├── docs/               # 文档
 │   ├── DEVELOPMENT.md     # 开发环境配置
-│   └── AWS_PERMISSIONS.md # AWS 权限配置
+│   ├── AWS_PERMISSIONS.md # AWS 权限配置
+│   ├── DATA_MIGRATION.md  # 数据迁移指南
+│   └── DEBUGGING.md       # 调试指南
 ├── frontend/           # React 前端应用
 │   ├── src/
 │   │   ├── components/ # UI 组件
@@ -141,10 +143,22 @@ aws sts get-caller-identity
 - 创建/更新 S3 Buckets（图片存储和前端托管）
 - 创建/更新 Lambda 函数和 Function URL
 - 创建/更新 Cognito User Pool 和 Client
+- 创建/更新 DynamoDB 表（用于图片排序）
 - 配置前端静态网站托管
 - 自动注入环境变量到前端构建
 
-#### 3. 获取部署信息
+#### 3. 迁移现有数据到 DynamoDB
+
+部署完成后，如果已有图片数据，需要运行迁移脚本将数据导入 DynamoDB 以启用排序功能：
+
+```bash
+cd backend/express
+npm run migrate
+```
+
+详细说明请参考 [数据迁移指南](docs/DATA_MIGRATION.md)。
+
+#### 4. 获取部署信息
 
 部署完成后，脚本会输出：
 - 前端 S3 静态网站 URL（例如：`http://lumina-frontend-rodin.s3-website-us-east-1.amazonaws.com`）

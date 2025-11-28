@@ -36,3 +36,30 @@ export const TAG_CONSTANTS = {
   MAX_TAG_LENGTH: 50,
 } as const;
 
+/**
+ * DynamoDB Constants
+ */
+export const DYNAMODB_CONSTANTS = {
+  // DynamoDB table name
+  TABLE_NAME: 'lumina-images',
+  
+  // GSI names
+  GSI_NAME: 'GSI-name',
+  GSI_DATE: 'GSI-date',
+  GSI_SIZE: 'GSI-size',
+  GSI_TAGS: 'GSI-tags',
+  
+  // Batch write size (DynamoDB limit is 25)
+  BATCH_WRITE_SIZE: 25,
+  
+  // Query page size
+  DEFAULT_PAGE_SIZE: 100,
+  MAX_PAGE_SIZE: 1000,
+} as const;
+
+/**
+ * Sort Options
+ */
+export type SortBy = 'name' | 'date' | 'size' | 'tags';
+export type SortOrder = 'asc' | 'desc';
+

@@ -7,14 +7,17 @@
     "dev": "ts-node server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "build:lambda": "rm -rf dist && tsc && cp package.json dist/ && cp -r node_modules dist/"
+    "build:lambda": "rm -rf dist && tsc && cp package.json dist/ && cp -r node_modules dist/",
+    "migrate": "ts-node scripts/migrate-to-dynamodb.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.939.0",
     "@aws-sdk/client-s3": "^3.939.0",
+    "@aws-sdk/lib-dynamodb": "^3.939.0",
     "@aws-sdk/s3-request-presigner": "^3.939.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@vendia/serverless-express": "^4.12.6",

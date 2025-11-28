@@ -33,13 +33,17 @@ class S3Service {
   async listImagesPaginated(
     prefix: string = '',
     maxKeys?: number,
-    continuationToken?: string
+    continuationToken?: string,
+    sortBy?: 'name' | 'date' | 'size' | 'tags',
+    sortOrder?: 'asc' | 'desc'
   ): Promise<PaginatedImageResponse> {
     try {
       const headers = await this.getAuthHeaders();
       const params = new URLSearchParams({ prefix: encodeURIComponent(prefix) });
       if (maxKeys) params.append('maxKeys', maxKeys.toString());
       if (continuationToken) params.append('continuationToken', continuationToken);
+      if (sortBy) params.append('sortBy', sortBy);
+      if (sortOrder) params.append('sortOrder', sortOrder);
       
       const response = await fetch(`${this.apiUrl}/s3/list?${params.toString()}`, {
         method: 'GET',

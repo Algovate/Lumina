@@ -14,6 +14,7 @@ LAMBDA_FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-LuminaBackendCli}"
 THUMBNAIL_LAMBDA_FUNCTION_NAME="${THUMBNAIL_LAMBDA_FUNCTION_NAME:-LuminaThumbnailGenerator}"
 LAMBDA_ROLE_NAME="${LAMBDA_ROLE_NAME:-LuminaLambdaCliRole}"
 COGNITO_USER_POOL_NAME="${COGNITO_USER_POOL_NAME:-lumina-user-pool-cli}"
+DYNAMODB_TABLE_NAME="${DYNAMODB_TABLE_NAME:-lumina-images}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -25,6 +26,7 @@ echo "Lambda function:       ${LAMBDA_FUNCTION_NAME}"
 echo "Thumbnail Lambda:      ${THUMBNAIL_LAMBDA_FUNCTION_NAME}"
 echo "Lambda role:           ${LAMBDA_ROLE_NAME}"
 echo "Cognito pool:          ${COGNITO_USER_POOL_NAME}"
+echo "DynamoDB table:        ${DYNAMODB_TABLE_NAME}"
 echo ""
 
 ########################################
@@ -174,6 +176,11 @@ aws iam attach-role-policy \
   --role-name "${LAMBDA_ROLE_NAME}" \
   --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess || true
 
+# Attach DynamoDB full access policy (for image metadata table)
+aws iam attach-role-policy \
+  --role-name "${LAMBDA_ROLE_NAME}" \
+  --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess || true
+
 LAMBDA_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${LAMBDA_ROLE_NAME}"
 
 echo "  角色 ARN: ${LAMBDA_ROLE_ARN}"
@@ -266,6 +273,77 @@ echo "  Domain:        ${COGNITO_DOMAIN}"
 echo "✅ Cognito 就绪"
 echo ""
 
+########################################
+# 3.5. 创建/确认 DynamoDB 表
+########################################
+echo "[3.5] 创建/确认 DynamoDB 表: ${DYNAMODB_TABLE_NAME}"
+
+if aws dynamodb describe-table --table-name "${DYNAMODB_TABLE_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+  echo "  表已存在，跳过创建"
+else
+  echo "  创建 DynamoDB 表..."
+  aws dynamodb create-table \
+    --table-name "${DYNAMODB_TABLE_NAME}" \
+    --attribute-definitions \
+      AttributeName=key,AttributeType=S \
+      AttributeName=folder,AttributeType=S \
+      AttributeName=name,AttributeType=S \
+      AttributeName=lastModified,AttributeType=N \
+      AttributeName=size,AttributeType=N \
+      AttributeName=tagCount,AttributeType=N \
+    --key-schema \
+      AttributeName=key,KeyType=HASH \
+    --global-secondary-indexes \
+      "[
+        {
+          \"IndexName\": \"GSI-name\",
+          \"KeySchema\": [
+            {\"AttributeName\": \"folder\", \"KeyType\": \"HASH\"},
+            {\"AttributeName\": \"name\", \"KeyType\": \"RANGE\"}
+          ],
+          \"Projection\": {\"ProjectionType\": \"ALL\"},
+          \"ProvisionedThroughput\": {\"ReadCapacityUnits\": 5, \"WriteCapacityUnits\": 5}
+        },
+        {
+          \"IndexName\": \"GSI-date\",
+          \"KeySchema\": [
+            {\"AttributeName\": \"folder\", \"KeyType\": \"HASH\"},
+            {\"AttributeName\": \"lastModified\", \"KeyType\": \"RANGE\"}
+          ],
+          \"Projection\": {\"ProjectionType\": \"ALL\"},
+          \"ProvisionedThroughput\": {\"ReadCapacityUnits\": 5, \"WriteCapacityUnits\": 5}
+        },
+        {
+          \"IndexName\": \"GSI-size\",
+          \"KeySchema\": [
+            {\"AttributeName\": \"folder\", \"KeyType\": \"HASH\"},
+            {\"AttributeName\": \"size\", \"KeyType\": \"RANGE\"}
+          ],
+          \"Projection\": {\"ProjectionType\": \"ALL\"},
+          \"ProvisionedThroughput\": {\"ReadCapacityUnits\": 5, \"WriteCapacityUnits\": 5}
+        },
+        {
+          \"IndexName\": \"GSI-tags\",
+          \"KeySchema\": [
+            {\"AttributeName\": \"folder\", \"KeyType\": \"HASH\"},
+            {\"AttributeName\": \"tagCount\", \"KeyType\": \"RANGE\"}
+          ],
+          \"Projection\": {\"ProjectionType\": \"ALL\"},
+          \"ProvisionedThroughput\": {\"ReadCapacityUnits\": 5, \"WriteCapacityUnits\": 5}
+        }
+      ]" \
+    --billing-mode PROVISIONED \
+    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+    --region "${AWS_REGION}" >/dev/null
+
+  echo "  等待表创建完成..."
+  aws dynamodb wait table-exists \
+    --table-name "${DYNAMODB_TABLE_NAME}" \
+    --region "${AWS_REGION}"
+  echo "✅ DynamoDB 表创建完成"
+fi
+echo ""
+
 # 构建前端 URL（用于 Lambda CORS 配置）
 FRONTEND_URL="http://${FRONTEND_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
 
@@ -332,20 +410,53 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
   CONFIG_UPDATE_SUCCESS=false
 
   while [ ${CONFIG_RETRY_COUNT} -lt ${MAX_CONFIG_RETRIES} ]; do
-    UPDATE_OUTPUT=$(aws lambda update-function-configuration \
-      --function-name "${LAMBDA_FUNCTION_NAME}" \
-      --role "${LAMBDA_ROLE_ARN}" \
-      --runtime nodejs20.x \
-      --handler dist/lambda.handler \
-      --timeout 30 \
-      --memory-size 512 \
-      --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL}}" \
-      --region "${AWS_REGION}" 2>&1)
-    UPDATE_EXIT_CODE=$?
+    echo "    尝试更新配置... ($((CONFIG_RETRY_COUNT + 1))/${MAX_CONFIG_RETRIES})"
+    # Use timeout to prevent hanging (macOS uses gtimeout if available, otherwise use timeout)
+    if command -v gtimeout >/dev/null 2>&1; then
+      UPDATE_OUTPUT=$(gtimeout 30 aws lambda update-function-configuration \
+        --function-name "${LAMBDA_FUNCTION_NAME}" \
+        --role "${LAMBDA_ROLE_ARN}" \
+        --runtime nodejs20.x \
+        --handler dist/lambda.handler \
+        --timeout 30 \
+        --memory-size 512 \
+        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
+        --region "${AWS_REGION}" 2>&1)
+      UPDATE_EXIT_CODE=$?
+    elif command -v timeout >/dev/null 2>&1; then
+      UPDATE_OUTPUT=$(timeout 30 aws lambda update-function-configuration \
+        --function-name "${LAMBDA_FUNCTION_NAME}" \
+        --role "${LAMBDA_ROLE_ARN}" \
+        --runtime nodejs20.x \
+        --handler dist/lambda.handler \
+        --timeout 30 \
+        --memory-size 512 \
+        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
+        --region "${AWS_REGION}" 2>&1)
+      UPDATE_EXIT_CODE=$?
+    else
+      # Fallback: run without timeout but with explicit error handling
+      UPDATE_OUTPUT=$(aws lambda update-function-configuration \
+        --function-name "${LAMBDA_FUNCTION_NAME}" \
+        --role "${LAMBDA_ROLE_ARN}" \
+        --runtime nodejs20.x \
+        --handler dist/lambda.handler \
+        --timeout 30 \
+        --memory-size 512 \
+        --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
+        --region "${AWS_REGION}" 2>&1)
+      UPDATE_EXIT_CODE=$?
+    fi
 
     if [ ${UPDATE_EXIT_CODE} -eq 0 ]; then
+      echo "    ✅ 配置更新命令执行成功"
       CONFIG_UPDATE_SUCCESS=true
       break
+    elif [ ${UPDATE_EXIT_CODE} -eq 124 ] || echo "${UPDATE_OUTPUT}" | grep -q "timeout\|timed out"; then
+      echo "    ⚠️  配置更新命令超时，重试..."
+      CONFIG_RETRY_COUNT=$((CONFIG_RETRY_COUNT + 1))
+      sleep 2
+      continue
     elif echo "${UPDATE_OUTPUT}" | grep -q "ResourceConflictException"; then
       if [ ${CONFIG_RETRY_COUNT} -lt $((MAX_CONFIG_RETRIES - 1)) ]; then
         WAIT_TIME=$((2 ** CONFIG_RETRY_COUNT))
@@ -354,19 +465,52 @@ if aws lambda get-function --function-name "${LAMBDA_FUNCTION_NAME}" --region "$
         CONFIG_RETRY_COUNT=$((CONFIG_RETRY_COUNT + 1))
       else
         echo "  ⚠️  警告: 配置更新冲突，已达到最大重试次数，继续部署流程..."
+        CONFIG_UPDATE_SUCCESS=false
         break
       fi
     else
       echo "  ❌ 错误: 配置更新失败: ${UPDATE_OUTPUT}"
+      CONFIG_UPDATE_SUCCESS=false
       break
     fi
   done
 
   if [ "${CONFIG_UPDATE_SUCCESS}" = "true" ]; then
     echo "  等待配置更新完成..."
-    aws lambda wait function-updated \
-      --function-name "${LAMBDA_FUNCTION_NAME}" \
-      --region "${AWS_REGION}" || true
+    # Poll function status with timeout instead of using wait command
+    MAX_WAIT=60
+    WAIT_COUNT=0
+    while [ ${WAIT_COUNT} -lt ${MAX_WAIT} ]; do
+      LAST_UPDATE_STATUS=$(aws lambda get-function \
+        --function-name "${LAMBDA_FUNCTION_NAME}" \
+        --region "${AWS_REGION}" \
+        --query 'Configuration.LastUpdateStatus' \
+        --output text 2>/dev/null || echo "Unknown")
+      
+      if [ "${LAST_UPDATE_STATUS}" = "Unknown" ]; then
+        echo "    ⚠️  无法获取函数状态，继续等待..."
+      fi
+      
+      if [ "${LAST_UPDATE_STATUS}" = "Successful" ]; then
+        echo "  ✅ 函数配置更新成功"
+        break
+      elif [ "${LAST_UPDATE_STATUS}" = "Failed" ]; then
+        echo "  ⚠️  警告: 函数配置更新失败，但继续部署流程..."
+        break
+      fi
+      
+      sleep 2
+      WAIT_COUNT=$((WAIT_COUNT + 2))
+      if [ $((WAIT_COUNT % 10)) -eq 0 ]; then
+        echo "    等待中... (${WAIT_COUNT}/${MAX_WAIT}秒)"
+      fi
+    done
+    
+    if [ ${WAIT_COUNT} -ge ${MAX_WAIT} ]; then
+      echo "  ⚠️  警告: 等待函数更新超时，但继续部署流程..."
+    fi
+  else
+    echo "  ⚠️  警告: 配置更新未成功，但继续部署流程..."
   fi
 else
   echo "  函数不存在，创建中..."
@@ -378,13 +522,38 @@ else
     --timeout 30 \
     --memory-size 512 \
     --zip-file fileb://"${ZIP_PATH}" \
-    --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL}}" \
+    --environment "Variables={S3_BUCKET=${IMAGE_BUCKET},COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID},COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID},FRONTEND_URL=${FRONTEND_URL},DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME}}" \
     --region "${AWS_REGION}" >/dev/null
 
   echo "  等待函数创建完成..."
-  aws lambda wait function-active \
-    --function-name "${LAMBDA_FUNCTION_NAME}" \
-    --region "${AWS_REGION}"
+  # Poll function state with timeout instead of using wait command
+  MAX_WAIT=120
+  WAIT_COUNT=0
+  while [ ${WAIT_COUNT} -lt ${MAX_WAIT} ]; do
+    FUNCTION_STATE=$(aws lambda get-function \
+      --function-name "${LAMBDA_FUNCTION_NAME}" \
+      --region "${AWS_REGION}" \
+      --query 'Configuration.State' \
+      --output text 2>/dev/null || echo "Unknown")
+    
+    if [ "${FUNCTION_STATE}" = "Active" ]; then
+      echo "  ✅ 函数已激活"
+      break
+    elif [ "${FUNCTION_STATE}" = "Failed" ]; then
+      echo "  ⚠️  警告: 函数创建失败，但继续部署流程..."
+      break
+    fi
+    
+    sleep 2
+    WAIT_COUNT=$((WAIT_COUNT + 2))
+    if [ $((WAIT_COUNT % 10)) -eq 0 ]; then
+      echo "    等待中... (${WAIT_COUNT}/${MAX_WAIT}秒)"
+    fi
+  done
+  
+  if [ ${WAIT_COUNT} -ge ${MAX_WAIT} ]; then
+    echo "  ⚠️  警告: 等待函数激活超时，但继续部署流程..."
+  fi
 fi
 
 # 创建或更新 Function URL

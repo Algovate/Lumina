@@ -98,6 +98,7 @@ aws iam attach-user-policy \
         "lambda:*",
         "iam:*",
         "cognito-idp:*",
+        "dynamodb:*",
         "sts:GetCallerIdentity",
         "logs:*"
       ],
@@ -312,6 +313,16 @@ aws lambda list-functions --max-items 5
         "s3:PutObject",
         "s3:DeleteObject",
         "s3:HeadObject",
+        "dynamodb:CreateTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:ListTables",
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:BatchWriteItem",
         "lambda:CreateFunction",
         "lambda:UpdateFunctionCode",
         "lambda:UpdateFunctionConfiguration",
@@ -404,9 +415,51 @@ aws iam simulate-principal-policy \
   --resource-arns "*"
 ```
 
+## DynamoDB 权限说明
+
+Lumina 使用 DynamoDB 存储图片元数据以支持高性能排序功能。Lambda 执行角色需要以下 DynamoDB 权限：
+
+### Lambda 执行角色需要的 DynamoDB 权限
+
+部署脚本会自动为 Lambda 角色附加 `AmazonDynamoDBFullAccess` 策略。如果需要更细粒度的权限，可以使用以下最小权限：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:BatchWriteItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/lumina-images",
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/lumina-images/index/*"
+      ]
+    }
+  ]
+}
+```
+
+### DynamoDB 表结构
+
+- **表名**: `lumina-images` (可通过环境变量 `DYNAMODB_TABLE_NAME` 配置)
+- **主键**: `key` (String) - S3 object key
+- **GSI**: 
+  - `GSI-name`: 按名称排序
+  - `GSI-date`: 按日期排序
+  - `GSI-size`: 按大小排序
+  - `GSI-tags`: 按标签数量排序
+
 ## 相关文档
 
 - [AWS IAM 文档](https://docs.aws.amazon.com/iam/)
 - [AWS Lambda 权限](https://docs.aws.amazon.com/lambda/latest/dg/access-control-identity-based.html)
 - [AWS S3 权限](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-overview.html)
+- [AWS DynamoDB 权限](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/access-control-overview.html)
 

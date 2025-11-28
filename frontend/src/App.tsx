@@ -8,6 +8,7 @@ import { FolderTree } from './components/FolderTree';
 import { TagList } from './components/TagList';
 import { ErrorAlert } from './components/ErrorAlert';
 import { LoginForm } from './components/LoginForm';
+import { SortSelector, type SortBy, type SortOrder } from './components/SortSelector';
 
 // Lazy load heavy components for code splitting
 const ImagePreview = lazy(() => import('./components/ImagePreview').then(module => ({ default: module.ImagePreview })));
@@ -25,6 +26,8 @@ function App() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [previewImage, setPreviewImage] = useState<S3Image | null>(null);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [sortBy, setSortBy] = useState<SortBy>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   // 默认收起侧边栏
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
@@ -39,7 +42,7 @@ function App() {
     refreshImages 
   } = useS3Images(
     currentFolder,
-    { enabled: isAuthenticated }
+    { enabled: isAuthenticated, sortBy, sortOrder }
   );
   const { uploadFiles, uploadProgress } = useImageUpload(
     isAuthenticated ? currentFolder : ''
@@ -356,28 +359,38 @@ function App() {
               </div>
             )}
 
-            {/* Image Count and Filters */}
-            {!loading && (
-              <div className="mb-4 text-sm text-gray-600">
-                共 {filteredImages.length} 张图片
-                {searchQuery && ` (搜索: "${searchQuery}")`}
-                {selectedTags.length > 0 && (
-                  <span className="ml-2">
-                    (标签筛选: {selectedTags.map((tag, idx) => (
-                      <span key={tag}>
-                        <button
-                          onClick={() => handleTagClick(tag)}
-                          className="text-blue-600 hover:text-blue-800 underline"
-                        >
-                          {tag}
-                        </button>
-                        {idx < selectedTags.length - 1 && ', '}
-                      </span>
-                    ))})
-                  </span>
-                )}
-              </div>
-            )}
+            {/* Image Count, Filters, and Sort */}
+            <div className="mb-4 flex items-center justify-between flex-wrap gap-4">
+              {!loading && (
+                <div className="text-sm text-gray-600">
+                  共 {filteredImages.length} 张图片
+                  {searchQuery && ` (搜索: "${searchQuery}")`}
+                  {selectedTags.length > 0 && (
+                    <span className="ml-2">
+                      (标签筛选: {selectedTags.map((tag, idx) => (
+                        <span key={tag}>
+                          <button
+                            onClick={() => handleTagClick(tag)}
+                            className="text-blue-600 hover:text-blue-800 underline"
+                          >
+                            {tag}
+                          </button>
+                          {idx < selectedTags.length - 1 && ', '}
+                        </span>
+                      ))})
+                    </span>
+                  )}
+                </div>
+              )}
+              <SortSelector
+                sortBy={sortBy}
+                sortOrder={sortOrder}
+                onSortChange={(newSortBy, newSortOrder) => {
+                  setSortBy(newSortBy);
+                  setSortOrder(newSortOrder);
+                }}
+              />
+            </div>
 
             {/* Album Grid */}
             <AlbumGrid
