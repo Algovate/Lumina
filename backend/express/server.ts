@@ -17,6 +17,7 @@ import { logger } from './utils/logger';
 import { validateConfig } from './utils/configValidation';
 import s3Routes from './routes/s3';
 import tagsRoutes from './routes/tags';
+import shareRoutes from './routes/share';
 
 dotenv.config();
 
@@ -243,9 +244,17 @@ app.post('/api/presign', authenticate, async (req, res) => {
   }
 });
 
-// Register route modules (all routes require authentication)
+// Register route modules
+// S3 and tags routes require authentication
 app.use('/api/s3', authenticate, s3Routes);
 app.use('/api/s3', authenticate, tagsRoutes);
+
+// Share routes: create and delete require authentication, but view is public
+// Register public GET route (no authentication required)
+app.get('/api/share/:token', shareRoutes);
+// Register authenticated routes
+app.post('/api/share/create', authenticate, shareRoutes);
+app.delete('/api/share/:token', authenticate, shareRoutes);
 
 // Global error handler middleware - must be after all routes
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

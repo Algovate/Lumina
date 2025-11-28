@@ -58,6 +58,23 @@ export const DYNAMODB_CONSTANTS = {
 } as const;
 
 /**
+ * Share Constants
+ */
+export const SHARE_CONSTANTS = {
+  // Share token length (in bytes, will be base64url encoded)
+  TOKEN_BYTES: 24, // 24 bytes = 32 characters in base64url
+  
+  // Default share expiry time (in days)
+  DEFAULT_SHARE_EXPIRY_DAYS: 30,
+  
+  // Maximum share expiry time (in days)
+  MAX_SHARE_EXPIRY_DAYS: 365,
+  
+  // DynamoDB table name for shares
+  SHARES_TABLE_NAME: 'lumina-shares',
+} as const;
+
+/**
  * Sort Options
  */
 export type SortBy = 'name' | 'date' | 'size' | 'tags';

@@ -1,8 +1,10 @@
 import { useState, useMemo, lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import type { S3Image } from './types';
 import logo from './assets/logo.png';
 import { AlbumGrid } from './components/AlbumGrid';
 import { UploadPage } from './components/UploadPage';
+import { ShareView } from './pages/ShareView';
 
 
 import { SearchBar } from './components/SearchBar';
@@ -21,7 +23,8 @@ import { useAuth } from './hooks/useAuth';
 import { filterImages } from './utils/imageUtils';
 import { s3Service } from './services/s3Service';
 
-function App() {
+// Main app content (requires authentication)
+function AppContent() {
   const { isAuthenticated, user, loading: authLoading, logout } = useAuth();
   const [currentFolder, setCurrentFolder] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -482,6 +485,20 @@ function App() {
         </Suspense>
       )}
     </div>
+  );
+}
+
+// Root App component with routing
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Public share route - no authentication required */}
+        <Route path="/share/:token" element={<ShareView />} />
+        {/* Main app - requires authentication */}
+        <Route path="*" element={<AppContent />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

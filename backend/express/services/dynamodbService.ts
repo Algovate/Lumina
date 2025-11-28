@@ -6,6 +6,7 @@ import {
   QueryCommand,
   BatchWriteCommand,
   UpdateCommand,
+  GetCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { DYNAMODB_CONSTANTS, type SortBy, type SortOrder } from '../constants';
 import { logger } from '../utils/logger';
@@ -91,6 +92,23 @@ export async function updateImageMetadata(
     await docClient.send(command);
   } catch (error) {
     logger.error(`Error updating image metadata for ${key}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get image metadata by key
+ */
+export async function getImageMetadata(key: string): Promise<ImageMetadata | null> {
+  try {
+    const command = new GetCommand({
+      TableName: TABLE_NAME,
+      Key: { key },
+    });
+    const response = await docClient.send(command);
+    return (response.Item as ImageMetadata) || null;
+  } catch (error) {
+    logger.error(`Error getting image metadata for ${key}:`, error);
     throw error;
   }
 }

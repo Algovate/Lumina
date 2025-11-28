@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { S3Image } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 import { TagManager } from './TagManager';
+import { ShareDialog } from './ShareDialog';
 import { s3Service } from '../services/s3Service';
 import { SLIDESHOW_CONSTANTS } from '../constants';
 
@@ -30,6 +31,7 @@ export const ImagePreview = ({
   const [slideshowInterval, setSlideshowInterval] = useState<number>(SLIDESHOW_CONSTANTS.DEFAULT_INTERVAL);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showTagEditor, setShowTagEditor] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
   const [editingTags, setEditingTags] = useState<string[]>([]);
   const [savingTags, setSavingTags] = useState(false);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -90,6 +92,7 @@ export const ImagePreview = ({
       setTransitionState('idle');
       setPreviousImage(null);
       setShowTagEditor(false);
+      setShowShareDialog(false);
     }
   }, [isOpen]);
 
@@ -370,6 +373,31 @@ export const ImagePreview = ({
             <option value="zoom">缩放</option>
           </select>
         </div>
+
+        {/* Share button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowShareDialog(true);
+          }}
+          className="p-2 bg-black bg-opacity-50 text-white hover:bg-opacity-70 rounded-lg transition-colors"
+          aria-label="分享图片"
+          title="分享图片"
+        >
+          <svg
+            className="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"
+            />
+          </svg>
+        </button>
 
         {/* Download button */}
         <button
@@ -660,6 +688,16 @@ export const ImagePreview = ({
             onClose();
           }}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Share dialog */}
+      {image && (
+        <ShareDialog
+          isOpen={showShareDialog}
+          imageKey={image.key}
+          imageName={image.name}
+          onClose={() => setShowShareDialog(false)}
         />
       )}
     </div>

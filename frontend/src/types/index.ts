@@ -47,3 +47,20 @@ export interface PaginatedImageResponse {
   keyCount: number;
 }
 
+export interface ShareInfo {
+  imageKey: string;
+  imageUrl: string;
+  thumbnailUrl?: string;
+  previewUrl?: string;
+  name: string;
+  size: number;
+  lastModified: Date;
+  tags: string[];
+}
+
+export interface ShareResponse {
+  shareToken: string;
+  shareUrl: string;
+  expiresAt: number;
+}
+
