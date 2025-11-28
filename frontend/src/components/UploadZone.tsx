@@ -79,13 +79,12 @@ export const UploadZone = ({
   );
 
   return (
-    <div className="mb-4">
+    <div>
       <div
-        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-          isDragging
+        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragging
             ? 'border-blue-500 bg-blue-50'
             : 'border-gray-300 hover:border-gray-400'
-        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

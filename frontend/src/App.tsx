@@ -2,7 +2,8 @@ import { useState, useMemo, lazy, Suspense } from 'react';
 import type { S3Image } from './types';
 import logo from './assets/logo.png';
 import { AlbumGrid } from './components/AlbumGrid';
-import { UploadZone } from './components/UploadZone';
+import { UploadModal } from './components/UploadModal';
+
 import { SearchBar } from './components/SearchBar';
 import { FolderTree } from './components/FolderTree';
 import { TagList } from './components/TagList';
@@ -30,16 +31,18 @@ function App() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   // 默认收起侧边栏
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+
 
   // 只在已认证时加载数据
-  const { 
-    images, 
-    loading, 
+  const {
+    images,
+    loading,
     loadingMore,
     hasMore,
     loadMore,
-    error: imagesError, 
-    refreshImages 
+    error: imagesError,
+    refreshImages
   } = useS3Images(
     currentFolder,
     { enabled: isAuthenticated, sortBy, sortOrder }
@@ -187,6 +190,16 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={() => setIsUploadModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                <span className="hidden sm:inline">上传图片</span>
+              </button>
+
               {user && (
                 <div className="flex items-center gap-2">
                   {user.picture && (
@@ -232,8 +245,8 @@ function App() {
           {/* Sidebar - Folder Tree */}
           <aside
             className={`transition-all duration-300 ease-in-out ${sidebarExpanded
-                ? 'w-64 shrink-0'
-                : 'w-0 overflow-hidden lg:w-12'
+              ? 'w-64 shrink-0'
+              : 'w-0 overflow-hidden lg:w-12'
               }`}
           >
             {sidebarExpanded ? (
@@ -344,13 +357,7 @@ function App() {
             {/* Search Bar */}
             <SearchBar value={searchQuery} onChange={setSearchQuery} />
 
-            {/* Upload Zone */}
-            <UploadZone
-              onFilesSelected={handleFilesSelected}
-              uploadProgress={uploadProgress}
-              currentFolder={currentFolder}
-              disabled={loading}
-            />
+
 
             {/* Current Folder Info */}
             {currentFolder && (
@@ -407,7 +414,22 @@ function App() {
         </div>
       </div>
 
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onFilesSelected={(files) => {
+          handleFilesSelected(files);
+          // Optional: close modal after selection, or keep open to show progress
+          // setIsUploadModalOpen(false); 
+        }}
+        uploadProgress={uploadProgress}
+        currentFolder={currentFolder}
+        disabled={loading}
+      />
+
       {/* Image Preview Modal */}
+
       {previewImage && (
         <Suspense fallback={
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
