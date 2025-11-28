@@ -649,10 +649,11 @@ export const ImagePreview = ({
         <ConfirmDialog
           isOpen={showDeleteConfirm}
           title="确认删除"
-          message={`确定要删除图片 "${image.name}" 吗？\n此操作无法撤销。`}
+          message="确定要删除图片吗？\n此操作无法撤销。"
           confirmText="删除"
           cancelText="取消"
           variant="danger"
+          image={image}
           onConfirm={() => {
             setShowDeleteConfirm(false);
             onDelete?.(image);
