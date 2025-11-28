@@ -107,7 +107,14 @@ export const ConfirmDialog = ({
           <div className="flex-shrink-0 mt-0.5">{style.icon}</div>
           <div className="flex-1 min-w-0">
             <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
-            <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed break-words break-all mb-4">{message}</p>
+            <div className="text-sm text-gray-700 leading-relaxed mb-4">
+              {message.split('\n').map((line, index, array) => (
+                <span key={index}>
+                  {line}
+                  {index < array.length - 1 && <br />}
+                </span>
+              ))}
+            </div>
             
             {/* Image preview and info */}
             {image && (

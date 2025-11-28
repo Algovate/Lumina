@@ -221,7 +221,7 @@ export const ImageCard = ({ image, onClick, onDelete, onTagClick, isSelected }: 
         <ConfirmDialog
           isOpen={showDeleteConfirm}
           title="确认删除"
-          message="确定要删除图片吗？\n此操作无法撤销。"
+          message={`确定要删除图片吗？\n此操作无法撤销。`}
           confirmText="删除"
           cancelText="取消"
           variant="danger"
