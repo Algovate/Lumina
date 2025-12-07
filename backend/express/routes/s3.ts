@@ -9,9 +9,10 @@ import {
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import type { NativeAttributeValue } from '@aws-sdk/util-dynamodb';
 import { validateS3Key, validateS3Prefix } from '../utils/validation';
 import type { S3ImageResponse, FolderResponse } from '../types/api';
-import { getErrorMessage } from '../types/errors';
+import { getErrorMessage, isNotFoundError } from '../types/errors';
 import { S3_CONSTANTS, DYNAMODB_CONSTANTS, type SortBy, type SortOrder } from '../constants';
 import { logger } from '../utils/logger';
 import {
@@ -21,6 +22,9 @@ import {
   metadataToS3Image,
   createImageMetadata,
 } from '../services/dynamodbService';
+
+/** DynamoDB key type for pagination */
+type DynamoDBKey = Record<string, NativeAttributeValue>;
 
 const router = express.Router();
 
@@ -58,8 +62,8 @@ async function thumbnailExists(thumbnailKey: string): Promise<boolean> {
     });
     await s3Client.send(headCommand);
     return true;
-  } catch (error: any) {
-    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
       return false;
     }
     // Log other errors but don't fail
@@ -79,8 +83,8 @@ async function previewExists(previewKey: string): Promise<boolean> {
     });
     await s3Client.send(headCommand);
     return true;
-  } catch (error: any) {
-    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
       return false;
     }
     // Log other errors but don't fail
@@ -99,11 +103,11 @@ async function getObjectTags(key: string): Promise<string[]> {
       Key: key,
     });
     const response = await s3Client.send(headCommand);
-    
+
     const metadata = response.Metadata || {};
     const tagsMeta = metadata['x-amz-meta-tags'] || metadata['tags'];
     if (!tagsMeta) return [];
-    
+
     try {
       const tags = JSON.parse(tagsMeta);
       return Array.isArray(tags) ? tags : [];
@@ -121,7 +125,7 @@ async function getObjectTags(key: string): Promise<string[]> {
 router.get('/list', async (req, res) => {
   try {
     let prefix = (req.query.prefix as string) || '';
-    
+
     // Validate and sanitize prefix
     try {
       prefix = validateS3Prefix(prefix);
@@ -149,7 +153,7 @@ router.get('/list', async (req, res) => {
     if (useDynamoDB && (sortBy !== 'date' || sortOrder !== 'desc')) {
       try {
         // Parse lastEvaluatedKey if provided
-        let lastEvaluatedKey: Record<string, any> | undefined;
+        let lastEvaluatedKey: DynamoDBKey | undefined;
         if (continuationToken) {
           try {
             lastEvaluatedKey = JSON.parse(Buffer.from(continuationToken, 'base64').toString('utf-8'));
@@ -325,7 +329,7 @@ router.get('/list', async (req, res) => {
                     Key: object.Key,
                   });
                   const url = await getSignedUrl(s3Client, getCommand, { expiresIn: S3_CONSTANTS.PRESIGNED_URL_EXPIRATION });
-                  
+
                   // 尝试获取缩略图 URL
                   let thumbnailUrl: string | undefined;
                   const thumbnailKey = getThumbnailKey(object.Key);
@@ -355,7 +359,7 @@ router.get('/list', async (req, res) => {
                       // Ignore preview URL errors in fallback
                     }
                   }
-                  
+
                   const image: S3ImageResponse = {
                     key: object.Key,
                     name: object.Key.split('/').pop() || object.Key,
@@ -478,7 +482,7 @@ router.post('/presign-upload', async (req, res) => {
 
     // 判断是否为图片文件，设置适当的缓存策略
     const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(key);
-    const cacheControl = isImage 
+    const cacheControl = isImage
       ? 'max-age=31536000, public' // 图片文件：1年缓存，公开
       : 'max-age=3600, public'; // 其他文件：1小时缓存
 
@@ -605,7 +609,7 @@ router.post('/move', async (req, res) => {
 router.get('/folders', async (req, res) => {
   try {
     let prefix = (req.query.prefix as string) || '';
-    
+
     // Validate and sanitize prefix
     try {
       prefix = validateS3Prefix(prefix);

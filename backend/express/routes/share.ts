@@ -2,7 +2,7 @@ import express from 'express';
 import { S3Client, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { validateS3Key } from '../utils/validation';
-import { getErrorMessage } from '../types/errors';
+import { getErrorMessage, isNotFoundError } from '../types/errors';
 import { S3_CONSTANTS } from '../constants';
 import { logger } from '../utils/logger';
 import { authenticate } from '../middleware/auth';
@@ -52,8 +52,8 @@ async function thumbnailExists(thumbnailKey: string): Promise<boolean> {
     });
     await s3Client.send(headCommand);
     return true;
-  } catch (error: any) {
-    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
       return false;
     }
     logger.error(`Error checking thumbnail existence for ${thumbnailKey}:`, error);
@@ -72,8 +72,8 @@ async function previewExists(previewKey: string): Promise<boolean> {
     });
     await s3Client.send(headCommand);
     return true;
-  } catch (error: any) {
-    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
       return false;
     }
     logger.error(`Error checking preview existence for ${previewKey}:`, error);
@@ -108,15 +108,15 @@ router.post('/create', authenticate, async (req, res, next) => {
         Key: imageKey,
       });
       await s3Client.send(headCommand);
-    } catch (error: any) {
-      if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+    } catch (error: unknown) {
+      if (isNotFoundError(error)) {
         return res.status(404).json({ error: 'Image not found' });
       }
       throw error;
     }
 
     // Get user ID from request (set by auth middleware)
-    const userId = (req as any).user?.sub || undefined;
+    const userId = (req as Express.Request & { user?: { sub?: string } }).user?.sub || undefined;
 
     // Create share token
     const shareToken = await createShareToken(
@@ -175,8 +175,8 @@ router.get('/:token', async (req, res) => {
         Key: shareInfo.imageKey,
       });
       await s3Client.send(headCommand);
-    } catch (error: any) {
-      if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+    } catch (error: unknown) {
+      if (isNotFoundError(error)) {
         return res.status(404).json({ error: 'Image not found' });
       }
       throw error;
@@ -278,7 +278,7 @@ router.delete('/:token', authenticate, async (req, res) => {
     }
 
     // Optional: Verify user owns the share (if createdBy is set)
-    const userId = (req as any).user?.sub;
+    const userId = (req as Express.Request & { user?: { sub?: string } }).user?.sub;
     if (shareInfo.createdBy && userId && shareInfo.createdBy !== userId) {
       return res.status(403).json({ error: 'You do not have permission to delete this share' });
     }

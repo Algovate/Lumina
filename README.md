@@ -16,7 +16,7 @@ Lumina 是一个基于 AWS S3 的现代化相册管理应用，提供流畅的�
 
 ## 🛠 技术栈
 
-- **前端**: React 18, TypeScript, Vite, Tailwind CSS, Zustand
+- **前端**: React 19, TypeScript, Vite, Tailwind CSS, Zustand
 - **后端**: Express.js, AWS SDK v3
 - **存储**: AWS S3, DynamoDB
 - **认证**: AWS Cognito

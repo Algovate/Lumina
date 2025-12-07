@@ -2,7 +2,6 @@ import express from 'express';
 import {
   S3Client,
   ListObjectsV2Command,
-  GetObjectCommand,
   HeadObjectCommand,
   CopyObjectCommand,
 } from '@aws-sdk/client-s3';
@@ -10,7 +9,7 @@ import { validateS3Key, validateTags } from '../utils/validation';
 import { getErrorMessage } from '../types/errors';
 import { S3_CONSTANTS } from '../constants';
 import { logger } from '../utils/logger';
-import { updateImageMetadata } from '../services/dynamodbService';
+import { updateImageMetadata, getAllTagsFromDynamoDB } from '../services/dynamodbService';
 
 const router = express.Router();
 
@@ -50,11 +49,11 @@ async function getObjectTags(key: string): Promise<string[]> {
       Key: key,
     });
     const response = await s3Client.send(headCommand);
-    
+
     const metadata = response.Metadata || {};
     const tagsMeta = metadata['x-amz-meta-tags'] || metadata['tags'];
     if (!tagsMeta) return [];
-    
+
     try {
       const tags = JSON.parse(tagsMeta);
       return Array.isArray(tags) ? normalizeTags(tags) : [];
@@ -128,34 +127,24 @@ router.put('/image/:key/tags', async (req, res) => {
     // Normalize tags
     const normalizedTags = normalizeTags(validatedTags);
 
-    // Get current object metadata and content type
+    // Get current object metadata and content type using HeadObject (efficient, no body download)
     const headCommand = new HeadObjectCommand({
       Bucket: BUCKET_NAME,
       Key: key,
     });
     const headResponse = await s3Client.send(headCommand);
 
-    // Get object content
-    const getCommand = new GetObjectCommand({
-      Bucket: BUCKET_NAME,
-      Key: key,
-    });
-    const getResponse = await s3Client.send(getCommand);
-    const body = await getResponse.Body?.transformToByteArray();
-
-    if (!body) {
-      return res.status(500).json({ error: 'Failed to read object body' });
-    }
-
     // Prepare new metadata (preserve existing metadata, update tags)
     const existingMetadata = headResponse.Metadata || {};
     const newMetadata: Record<string, string> = { ...existingMetadata };
     newMetadata['tags'] = serializeTags(normalizedTags);
 
-    // Use CopyObjectCommand to update metadata (S3 doesn't support direct metadata updates)
+    // Use CopyObjectCommand to update metadata in-place
+    // S3 CopyObject with same source and destination + MetadataDirective: 'REPLACE'
+    // efficiently updates metadata without transferring the object body
     const copyCommand = new CopyObjectCommand({
       Bucket: BUCKET_NAME,
-      CopySource: `${BUCKET_NAME}/${key}`,
+      CopySource: encodeURIComponent(`${BUCKET_NAME}/${key}`),
       Key: key,
       Metadata: newMetadata,
       MetadataDirective: 'REPLACE',
@@ -183,8 +172,18 @@ router.put('/image/:key/tags', async (req, res) => {
 });
 
 // Get all tags with usage counts
+// Uses DynamoDB for efficiency; falls back to S3 scan if DynamoDB fails
 router.get('/tags', async (req, res) => {
   try {
+    // Try DynamoDB first (much more efficient)
+    try {
+      const tags = await getAllTagsFromDynamoDB();
+      return res.json({ tags });
+    } catch (dynamoError) {
+      logger.warn('DynamoDB tag query failed, falling back to S3 scan:', dynamoError);
+    }
+
+    // Fallback to S3 scan (slower but works without DynamoDB)
     if (!BUCKET_NAME) {
       return res.status(500).json({ error: 'S3_BUCKET not configured' });
     }

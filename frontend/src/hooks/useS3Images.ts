@@ -18,11 +18,40 @@ export const useS3Images = (folderPath: string = '', options: UseS3ImagesOptions
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [nextContinuationToken, setNextContinuationToken] = useState<string | null>(null);
-  
+
   // Use refs to track current folder path and sort options to detect changes
   const currentFolderPathRef = useRef<string>(folderPath);
   const currentSortByRef = useRef<SortBy>(sortBy);
   const currentSortOrderRef = useRef<SortOrder>(sortOrder);
+
+  /**
+   * Check if folder or sort options have changed and update refs
+   * @returns Object indicating what changed
+   */
+  const checkAndUpdateRefs = useCallback(() => {
+    const folderChanged = currentFolderPathRef.current !== folderPath;
+    const sortChanged = currentSortByRef.current !== sortBy || currentSortOrderRef.current !== sortOrder;
+
+    // Update refs to current values
+    if (folderChanged) {
+      currentFolderPathRef.current = folderPath;
+    }
+    if (sortChanged) {
+      currentSortByRef.current = sortBy;
+      currentSortOrderRef.current = sortOrder;
+    }
+
+    return { folderChanged, sortChanged, anyChanged: folderChanged || sortChanged };
+  }, [folderPath, sortBy, sortOrder]);
+
+  /**
+   * Reset pagination state when folder or sort changes
+   */
+  const resetPaginationState = useCallback(() => {
+    setImages([]);
+    setNextContinuationToken(null);
+    setHasMore(false);
+  }, []);
 
   const loadImages = useCallback(async (isLoadMore: boolean = false, token?: string | null) => {
     // 如果未启用（未认证），不加载
@@ -36,26 +65,14 @@ export const useS3Images = (folderPath: string = '', options: UseS3ImagesOptions
       return;
     }
 
-    // 如果文件夹路径或排序选项改变，重置状态
-    const folderChanged = currentFolderPathRef.current !== folderPath;
-    const sortChanged = currentSortByRef.current !== sortBy || currentSortOrderRef.current !== sortOrder;
-    
-    if (folderChanged) {
-      currentFolderPathRef.current = folderPath;
-    }
-    if (sortChanged) {
-      currentSortByRef.current = sortBy;
-      currentSortOrderRef.current = sortOrder;
-    }
-
-    if (folderChanged || sortChanged) {
+    // Check for changes and reset if needed
+    const { anyChanged } = checkAndUpdateRefs();
+    if (anyChanged) {
       if (isLoadMore) {
         // 如果是在加载更多时文件夹或排序改变了，不应该继续
         return;
       }
-      setImages([]);
-      setNextContinuationToken(null);
-      setHasMore(false);
+      resetPaginationState();
     }
 
     if (isLoadMore) {
@@ -94,29 +111,12 @@ export const useS3Images = (folderPath: string = '', options: UseS3ImagesOptions
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [folderPath, enabled, sortBy, sortOrder]);
+  }, [folderPath, enabled, sortBy, sortOrder, checkAndUpdateRefs, resetPaginationState]);
 
+  // Load images when dependencies change
   useEffect(() => {
-    // 当文件夹路径或排序选项改变时，重置并重新加载
-    const folderChanged = currentFolderPathRef.current !== folderPath;
-    const sortChanged = currentSortByRef.current !== sortBy || currentSortOrderRef.current !== sortOrder;
-    
-    if (folderChanged) {
-      currentFolderPathRef.current = folderPath;
-    }
-    if (sortChanged) {
-      currentSortByRef.current = sortBy;
-      currentSortOrderRef.current = sortOrder;
-    }
-
-    if (folderChanged || sortChanged) {
-      setImages([]);
-      setNextContinuationToken(null);
-      setHasMore(false);
-    }
     loadImages(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folderPath, enabled, sortBy, sortOrder]); // loadImages 的依赖项已经包含这些，所以这里不需要添加
+  }, [loadImages]);
 
   const loadMore = useCallback(() => {
     if (!loadingMore && hasMore && nextContinuationToken) {
@@ -126,19 +126,17 @@ export const useS3Images = (folderPath: string = '', options: UseS3ImagesOptions
 
   const refreshImages = useCallback(() => {
     // 刷新时重置分页状态
-    setNextContinuationToken(null);
-    setHasMore(false);
+    resetPaginationState();
     loadImages(false);
-  }, [loadImages]);
+  }, [loadImages, resetPaginationState]);
 
-  return { 
-    images, 
-    loading, 
+  return {
+    images,
+    loading,
     loadingMore,
-    error, 
+    error,
     hasMore,
     loadMore,
-    refreshImages 
+    refreshImages
   };
 };
-

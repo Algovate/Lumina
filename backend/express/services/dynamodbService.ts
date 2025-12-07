@@ -7,10 +7,18 @@ import {
   BatchWriteCommand,
   UpdateCommand,
   GetCommand,
+  ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
+import type { NativeAttributeValue } from '@aws-sdk/util-dynamodb';
 import { DYNAMODB_CONSTANTS, type SortBy, type SortOrder } from '../constants';
 import { logger } from '../utils/logger';
 import type { S3ImageResponse } from '../types/api';
+
+/** DynamoDB key type for pagination */
+type DynamoDBKey = Record<string, NativeAttributeValue>;
+
+/** Expression attribute value types based on ImageMetadata fields */
+type ExpressionValue = string | number | string[] | undefined;
 
 // Initialize DynamoDB client
 const dynamoDBClient = new DynamoDBClient({
@@ -66,7 +74,7 @@ export async function updateImageMetadata(
   try {
     const updateExpression: string[] = [];
     const expressionAttributeNames: Record<string, string> = {};
-    const expressionAttributeValues: Record<string, any> = {};
+    const expressionAttributeValues: Record<string, ExpressionValue> = {};
 
     Object.entries(updates).forEach(([field, value]) => {
       const nameKey = `#${field}`;
@@ -137,10 +145,10 @@ export async function listImagesWithSort(
   sortBy: SortBy = 'date',
   sortOrder: SortOrder = 'desc',
   limit: number = DYNAMODB_CONSTANTS.DEFAULT_PAGE_SIZE,
-  lastEvaluatedKey?: Record<string, any>
+  lastEvaluatedKey?: DynamoDBKey
 ): Promise<{
   items: ImageMetadata[];
-  lastEvaluatedKey?: Record<string, any>;
+  lastEvaluatedKey?: DynamoDBKey;
 }> {
   try {
     // Determine which GSI to use based on sortBy
@@ -274,3 +282,45 @@ export function metadataToS3Image(metadata: ImageMetadata, url: string): S3Image
   };
 }
 
+/**
+ * Get all unique tags with their usage counts from DynamoDB
+ * This is much more efficient than scanning S3 objects individually
+ */
+export async function getAllTagsFromDynamoDB(): Promise<{ tag: string; count: number }[]> {
+  try {
+    const tagCounts: Record<string, number> = {};
+    let lastEvaluatedKey: Record<string, unknown> | undefined;
+
+    // Scan the table with projection to only get tags (minimizes data transfer)
+    do {
+      const command = new ScanCommand({
+        TableName: TABLE_NAME,
+        ProjectionExpression: 'tags',
+        ExclusiveStartKey: lastEvaluatedKey,
+      });
+
+      const response = await docClient.send(command);
+
+      if (response.Items) {
+        for (const item of response.Items) {
+          const tags = item.tags as string[] | undefined;
+          if (tags && Array.isArray(tags)) {
+            for (const tag of tags) {
+              tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            }
+          }
+        }
+      }
+
+      lastEvaluatedKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (lastEvaluatedKey);
+
+    // Convert to array format and sort by usage count (descending)
+    return Object.entries(tagCounts)
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count);
+  } catch (error) {
+    logger.error('Error getting all tags from DynamoDB:', error);
+    throw error;
+  }
+}

@@ -70,9 +70,9 @@ export const ImagePreview = ({
     // 如果幻灯片模式开启且还有下一张图片，设置新的计时器
     if (slideshowMode && isOpen && hasNext && transitionState === 'idle') {
       slideshowTimerRef.current = setInterval(() => {
-        if (transitionState === 'idle') {
-          handleNext();
-        }
+        // Note: handleNext is called inside the interval callback
+        // It's not in deps because it's not used in the effect setup logic
+        handleNext();
       }, slideshowInterval);
     }
 
@@ -83,7 +83,8 @@ export const ImagePreview = ({
         slideshowTimerRef.current = null;
       }
     };
-  }, [slideshowMode, isOpen, hasNext, slideshowInterval, currentIndex, onNext]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slideshowMode, isOpen, hasNext, slideshowInterval, transitionState]);
 
   // 关闭时停止幻灯片
   useEffect(() => {
@@ -169,7 +170,7 @@ export const ImagePreview = ({
       requestAnimationFrame(() => {
         setTransitionState('transitioning');
       });
-      
+
       // 过渡动画完成后重置状态
       const timer = setTimeout(() => {
         setTransitionState('idle');
@@ -235,7 +236,7 @@ export const ImagePreview = ({
   // 获取过渡动画类名
   const getTransitionClasses = () => {
     const baseClasses = 'transition-all duration-500 ease-in-out';
-    
+
     if (transitionState === 'idle') {
       return `${baseClasses} opacity-100 scale-100`;
     }
@@ -243,13 +244,13 @@ export const ImagePreview = ({
     switch (transitionType) {
       case 'fade':
         return `${baseClasses} ${transitionState === 'transitioning' ? 'opacity-0' : 'opacity-100'}`;
-      
+
       case 'slide':
         return `${baseClasses} ${transitionState === 'transitioning' ? 'opacity-0' : 'opacity-100'}`;
-      
+
       case 'zoom':
         return `${baseClasses} ${transitionState === 'transitioning' ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`;
-      
+
       default:
         return baseClasses;
     }
@@ -260,10 +261,10 @@ export const ImagePreview = ({
     if (transitionType !== 'slide' || transitionState !== 'transitioning') {
       return {};
     }
-    
+
     return {
-      transform: transitionDirection === 'next' 
-        ? 'translateX(100%)' 
+      transform: transitionDirection === 'next'
+        ? 'translateX(100%)'
         : 'translateX(-100%)',
     };
   };
@@ -283,11 +284,10 @@ export const ImagePreview = ({
             e.stopPropagation();
             toggleSlideshow();
           }}
-          className={`p-2 rounded-lg transition-colors ${
-            slideshowMode
+          className={`p-2 rounded-lg transition-colors ${slideshowMode
               ? 'bg-blue-600 text-white hover:bg-blue-700'
               : 'bg-black bg-opacity-50 text-white hover:bg-opacity-70'
-          }`}
+            }`}
           aria-label={slideshowMode ? '停止幻灯片' : '开始幻灯片'}
           title={slideshowMode ? '停止幻灯片 (空格键)' : '开始幻灯片 (空格键)'}
         >
@@ -512,13 +512,13 @@ export const ImagePreview = ({
                 alt={previousImage.name}
                 className="absolute max-w-full max-h-[90vh] object-contain transition-transform duration-500 ease-in-out"
                 style={{
-                  transform: transitionDirection === 'next' 
-                    ? 'translateX(-100%)' 
+                  transform: transitionDirection === 'next'
+                    ? 'translateX(-100%)'
                     : 'translateX(100%)',
                 }}
               />
             )}
-            
+
             {/* Current image */}
             <img
               ref={imageRef}
